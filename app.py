@@ -531,7 +531,7 @@ with st.sidebar.form(key="search_form"):
             "조회 기간",
             options=[1, 3, 6, 12],
             index=3,
-            format_func=lambda x: f"최근 {x}개월" if x < 12 else "최근 1년 (12개월)",
+            format_func=lambda x: f"최근 {x}개월",
             label_visibility="collapsed"
         )
 
@@ -607,7 +607,10 @@ if selected_candidate:
     months_opt = st.session_state.get("submitted_months", 12)
     period_str = f"최근 {months_opt}개월" if months_opt < 12 else "최근 1년"
 
-    with st.spinner(f"⏳ [{period_str} / {prop_type}] 인근 행정구역 수집 중..."):
+    display_address_str = selected_candidate['address'] if selected_candidate['address'] else selected_candidate['place_name']
+    spinner_message = f"⏳ [{display_address_str}]의 {period_str} [{prop_type}] 거래 정보를 수집 중입니다..."
+
+    with st.spinner(spinner_message):
         lat, lng, full_address, lawd_cd, region_name, filtered_df = fetch_real_estate_for_candidate(
             selected_candidate['lat'],
             selected_candidate['lng'],
