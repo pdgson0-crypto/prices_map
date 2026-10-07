@@ -417,8 +417,7 @@ def fetch_real_estate_for_candidate(lat, lng, full_address, place_name, property
                     pass
 
             if c_lat is None:
-                c_lat, c_lng = lat, lng
-                c_dist = 0.0
+                continue
             else:
                 c_dist = haversine_distance(lat, lng, c_lat, c_lng)
 
