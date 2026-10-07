@@ -404,6 +404,7 @@ if "last_click_ts" not in st.session_state:
 # -----------------------------------------------------------------------------
 # 6. 메인 UI 및 사이드바 (st.form 사용)
 # -----------------------------------------------------------------------------
+st.sidebar.caption("한국자산관리아카데미")
 st.sidebar.title("📍 주소 및 조건")
 
 with st.sidebar.form(key="search_form"):
