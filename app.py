@@ -393,44 +393,44 @@ def fetch_real_estate_for_candidate(lat, lng, full_address, place_name, property
     rad_limit = radius if use_radius_limit else 999.0
 
     for trade in raw_items:
-        key = f"{trade['umd_name']} {trade['apt_name']}"
-        
-        if key not in coord_cache:
-            c_lat, c_lng = None, None
+    coord_cache = {}
+    valid_trades = []
+    rad_limit = radius if use_radius_limit else 999.0
+
+    # 📌 1단계: 전체 거래 중 '물건명(아파트명)'별로 대표 좌표를 딱 한 번씩만 구함 (속도 대폭 향상의 핵심!)
+    unique_apt_names = set(item['apt_name'] for item in raw_items)
+    
+    for apt_name in unique_apt_names:
+        c_lat, c_lng = None, None
+        # 법정동명 조합 또는 아파트 이름으로 카카오 좌표 검색
+        for query_str in [f"{list(lawd_info.values())[0]} {apt_name}", apt_name]:
             try:
-                geo_url = f"https://dapi.kakao.com/v2/local/search/keyword.json?query={key}"
-                geo_res = requests.get(geo_url, headers=headers, timeout=3).json()
+                geo_url = f"https://dapi.kakao.com/v2/local/search/keyword.json?query={query_str}"
+                geo_res = requests.get(geo_url, headers=headers, timeout=2).json()
                 if geo_res.get('documents'):
                     doc = geo_res['documents'][0]
                     c_lat, c_lng = float(doc['y']), float(doc['x'])
+                    break
             except Exception:
                 pass
+        
+        # 좌표를 못 찾은 단지는 마커 쏠림 방지를 위해 스킵
+        if c_lat is not None:
+            c_dist = haversine_distance(lat, lng, c_lat, c_lng)
+            coord_cache[apt_name] = (c_lat, c_lng, c_dist)
+
+    # 📌 2단계: 미리 구해둔 좌표 캐시를 거래 내역에 빠르게 매핑
+    for trade in raw_items:
+        apt_name = trade['apt_name']
+        if apt_name in coord_cache:
+            c_lat, c_lng, c_dist = coord_cache[apt_name]
             
-            if c_lat is None:
-                try:
-                    geo_url2 = f"https://dapi.kakao.com/v2/local/search/keyword.json?query={trade['apt_name']}"
-                    geo_res2 = requests.get(geo_url2, headers=headers, timeout=3).json()
-                    if geo_res2.get('documents'):
-                        doc2 = geo_res2['documents'][0]
-                        c_lat, c_lng = float(doc2['y']), float(doc2['x'])
-                except Exception:
-                    pass
-
-            if c_lat is None:
-                continue
-            else:
-                c_dist = haversine_distance(lat, lng, c_lat, c_lng)
-
-            coord_cache[key] = (c_lat, c_lng, c_dist)
-        
-        c_lat, c_lng, c_dist = coord_cache[key]
-        
-        if not use_radius_limit or c_dist <= rad_limit:
-            trade_item = trade.copy()
-            trade_item['lat'] = c_lat
-            trade_item['lng'] = c_lng
-            trade_item['거리(km)'] = c_dist
-            valid_trades.append(trade_item)
+            if not use_radius_limit or c_dist <= rad_limit:
+                trade_item = trade.copy()
+                trade_item['lat'] = c_lat
+                trade_item['lng'] = c_lng
+                trade_item['거리(km)'] = c_dist
+                valid_trades.append(trade_item)
 
     if not valid_trades:
         return lat, lng, display_addr, "", region_names_str, pd.DataFrame()
