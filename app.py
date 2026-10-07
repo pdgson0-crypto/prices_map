@@ -210,7 +210,7 @@ def haversine_distance(lat1, lon1, lat2, lon2):
     c = 2 * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
     return R * c
 
-def get_recent_months(n=3):
+def get_recent_months(n=12):
     today = datetime.now()
     months = []
     for i in range(n):
@@ -221,6 +221,35 @@ def get_recent_months(n=3):
             year -= 1
         months.append(f"{year:04d}{month:02d}")
     return months
+
+# 📌 중심점 주변의 여러 행정구역(시/군/구 법정동 코드)을 탐색하는 함수
+def get_nearby_lawd_codes(lat, lng, radius_km=2.0):
+    headers = {"Authorization": f"KakaoAK {KAKAO_REST_KEY}"}
+    lawd_info = {} # {lawd_cd: region_name}
+    
+    # 반경 오프셋 약 (1km = 약 0.009도)
+    offset = (radius_km / 111.0)
+    check_points = [
+        (lat, lng), # 중심점
+        (lat + offset, lng), # 북
+        (lat - offset, lng), # 남
+        (lat, lng + offset), # 동
+        (lat, lng - offset)  # 서
+    ]
+    
+    for c_lat, c_lng in check_points:
+        try:
+            region_url = f"https://dapi.kakao.com/v2/local/geo/coord2regioncode.json?x={c_lng}&y={c_lat}"
+            reg_res = requests.get(region_url, headers=headers, timeout=3)
+            if reg_res.status_code == 200 and reg_res.json().get('documents'):
+                reg_doc = reg_res.json()['documents'][0]
+                code = reg_doc['code'][:5]
+                name = f"{reg_doc.get('region_1depth_name', '')} {reg_doc.get('region_2depth_name', '')}".strip()
+                lawd_info[code] = name
+        except Exception:
+            pass
+            
+    return lawd_info
 
 def search_location_candidates(query):
     headers = {"Authorization": f"KakaoAK {KAKAO_REST_KEY}"}
@@ -277,96 +306,87 @@ def search_location_candidates(query):
 @st.cache_data(show_spinner=False, ttl=3600)
 def fetch_real_estate_for_candidate(lat, lng, full_address, place_name, property_type, months_count, use_radius_limit, radius):
     headers = {"Authorization": f"KakaoAK {KAKAO_REST_KEY}"}
-    lawd_cd = None
-    region_name = "알 수 없는 지역"
-    
-    try:
-        region_url = f"https://dapi.kakao.com/v2/local/geo/coord2regioncode.json?x={lng}&y={lat}"
-        reg_res = requests.get(region_url, headers=headers, timeout=5)
-        if reg_res.status_code == 200 and reg_res.json().get('documents'):
-            reg_doc = reg_res.json()['documents'][0]
-            lawd_cd = reg_doc['code'][:5]
-            region_name = f"{reg_doc.get('region_1depth_name', '')} {reg_doc.get('region_2depth_name', '')}".strip()
-    except Exception:
-        pass
-
     display_addr = full_address if full_address else place_name
 
-    if not lawd_cd:
-        return lat, lng, display_addr, lawd_cd, region_name, pd.DataFrame()
+    # 📌 인근 구/시 법정동 코드 자동 추출 (구가 달라도 모두 수집)
+    search_radius = radius if use_radius_limit else 2.5
+    lawd_info = get_nearby_lawd_codes(lat, lng, radius_km=search_radius)
+    
+    if not lawd_info:
+        return lat, lng, display_addr, "", "지역 정보 없음", pd.DataFrame()
 
+    region_names_str = ", ".join(list(set(lawd_info.values())))
     months_list = get_recent_months(months_count)
     raw_items = []
     api_url = API_ENDPOINTS.get(property_type, API_ENDPOINTS["아파트"])
     
-    # 1000건 제한 방지를 위한 페이지네이션 수집
-    for ymd in months_list:
-        page_no = 1
-        while True:
-            params = {
-                'serviceKey': requests.utils.unquote(MOLIT_SERVICE_KEY),
-                'LAWD_CD': lawd_cd,
-                'DEAL_YMD': ymd,
-                'pageNo': str(page_no),
-                'numOfRows': '1000'
-            }
-            try:
-                res = requests.get(api_url, params=params, timeout=5)
-                if res.status_code == 200:
-                    root = ET.fromstring(res.content)
-                    items = root.findall('.//item')
-                    if not items:
-                        break
-                    
-                    for item in items:
-                        # 유형별 건물명 / 물건명 추출
-                        if property_type == "아파트":
-                            apt_name = item.findtext('aptNm', default='아파트').strip()
-                        elif property_type == "연립/다세대":
-                            apt_name = item.findtext('mhbNm', default='연립다세대').strip()
-                        elif property_type == "오피스텔":
-                            apt_name = item.findtext('offiNm', default='오피스텔').strip()
-                        elif property_type == "단독/다가구":
-                            apt_name = item.findtext('houseType', default='단독/다가구').strip()
-                        elif property_type == "토지":
-                            apt_name = f"토지({item.findtext('jimok', default='-').strip()})"
-                        else:
-                            apt_name = "부동산"
+    # 여러 법정동(구)에 대해 각각 국토부 API 수집
+    for lawd_cd in lawd_info.keys():
+        for ymd in months_list:
+            page_no = 1
+            while True:
+                params = {
+                    'serviceKey': requests.utils.unquote(MOLIT_SERVICE_KEY),
+                    'LAWD_CD': lawd_cd,
+                    'DEAL_YMD': ymd,
+                    'pageNo': str(page_no),
+                    'numOfRows': '1000'
+                }
+                try:
+                    res = requests.get(api_url, params=params, timeout=5)
+                    if res.status_code == 200:
+                        root = ET.fromstring(res.content)
+                        items = root.findall('.//item')
+                        if not items:
+                            break
+                        
+                        for item in items:
+                            if property_type == "아파트":
+                                apt_name = item.findtext('aptNm', default='아파트').strip()
+                            elif property_type == "연립/다세대":
+                                apt_name = item.findtext('mhbNm', default='연립다세대').strip()
+                            elif property_type == "오피스텔":
+                                apt_name = item.findtext('offiNm', default='오피스텔').strip()
+                            elif property_type == "단독/다가구":
+                                apt_name = item.findtext('houseType', default='단독/다가구').strip()
+                            elif property_type == "토지":
+                                apt_name = f"토지({item.findtext('jimok', default='-').strip()})"
+                            else:
+                                apt_name = "부동산"
 
-                        price_str = item.findtext('dealAmount', default='0').replace(',', '').strip()
+                            price_str = item.findtext('dealAmount', default='0').replace(',', '').strip()
+                            
+                            if property_type == "토지":
+                                area_val = item.findtext('plottageArea', default='0')
+                            elif property_type == "단독/다가구":
+                                area_val = item.findtext('totalFloorArea', default='0')
+                            else:
+                                area_val = item.findtext('excluUseAr', default='0')
+                            
+                            area = float(area_val) if area_val else 0.0
+                            umd_name = item.findtext('umdNm', default='').strip()
+                            floor_val = item.findtext('floor', default='').strip()
+                            
+                            deal_year = item.findtext('dealYear', default='')
+                            deal_month = item.findtext('dealMonth', default='').zfill(2)
+                            deal_day = item.findtext('dealDay', default='').zfill(2)
+                            
+                            raw_items.append({
+                                "apt_name": apt_name,
+                                "umd_name": umd_name,
+                                "price": int(price_str),
+                                "area": area,
+                                "floor": f"{floor_val}층" if floor_val else "-",
+                                "deal_date": f"{deal_year}-{deal_month}-{deal_day}"
+                            })
                         
-                        # 면적 추출 (토지는 대지면적 plottageArea)
-                        if property_type == "토지":
-                            area_val = item.findtext('plottageArea', default='0')
-                        elif property_type == "단독/다가구":
-                            area_val = item.findtext('totalFloorArea', default='0')
-                        else:
-                            area_val = item.findtext('excluUseAr', default='0')
-                        
-                        area = float(area_val) if area_val else 0.0
-                        umd_name = item.findtext('umdNm', default='').strip()
-                        floor_val = item.findtext('floor', default='').strip()
-                        
-                        deal_year = item.findtext('dealYear', default='')
-                        deal_month = item.findtext('dealMonth', default='').zfill(2)
-                        deal_day = item.findtext('dealDay', default='').zfill(2)
-                        
-                        raw_items.append({
-                            "apt_name": apt_name,
-                            "umd_name": umd_name,
-                            "price": int(price_str),
-                            "area": area,
-                            "floor": f"{floor_val}층" if floor_val else "-",
-                            "deal_date": f"{deal_year}-{deal_month}-{deal_day}"
-                        })
-                    
-                    if len(items) < 1000:
+                        if len(items) < 1000:
+                            break
+                        page_no += 1
+                    else:
                         break
-                    page_no += 1
-                else:
+                except Exception:
                     break
-            except Exception:
-                break
 
     coord_cache = {}
     valid_trades = []
@@ -377,7 +397,6 @@ def fetch_real_estate_for_candidate(lat, lng, full_address, place_name, property
         
         if key not in coord_cache:
             c_lat, c_lng = None, None
-            # 1차 검색: 법정동 + 물건명
             try:
                 geo_url = f"https://dapi.kakao.com/v2/local/search/keyword.json?query={key}"
                 geo_res = requests.get(geo_url, headers=headers, timeout=3).json()
@@ -387,7 +406,6 @@ def fetch_real_estate_for_candidate(lat, lng, full_address, place_name, property
             except Exception:
                 pass
             
-            # 2차 검색: 1차 실패 시 물건명만 검색
             if c_lat is None:
                 try:
                     geo_url2 = f"https://dapi.kakao.com/v2/local/search/keyword.json?query={trade['apt_name']}"
@@ -398,7 +416,6 @@ def fetch_real_estate_for_candidate(lat, lng, full_address, place_name, property
                 except Exception:
                     pass
 
-            # 3차 예외 처리: 위치 검색 실패 시 기본 좌표 할당 (데이터 누락 방지)
             if c_lat is None:
                 c_lat, c_lng = lat, lng
                 c_dist = 0.0
@@ -417,7 +434,7 @@ def fetch_real_estate_for_candidate(lat, lng, full_address, place_name, property
             valid_trades.append(trade_item)
 
     if not valid_trades:
-        return lat, lng, display_addr, lawd_cd, region_name, pd.DataFrame()
+        return lat, lng, display_addr, "", region_names_str, pd.DataFrame()
 
     df = pd.DataFrame(valid_trades)
     df = df.rename(columns={
@@ -428,7 +445,7 @@ def fetch_real_estate_for_candidate(lat, lng, full_address, place_name, property
         "deal_date": "계약일"
     })
     df = df.sort_values(by=['계약일'], ascending=False).reset_index(drop=True)
-    return lat, lng, display_addr, lawd_cd, region_name, df
+    return lat, lng, display_addr, "", region_names_str, df
 
 # -----------------------------------------------------------------------------
 # 4. 중앙 정렬 HTML 표 출력 함수
@@ -480,7 +497,10 @@ if "last_click_ts" not in st.session_state:
 # -----------------------------------------------------------------------------
 # 6. 메인 UI 및 사이드바
 # -----------------------------------------------------------------------------
-st.sidebar.caption("🏢 한국자산관리아카데미")
+st.sidebar.markdown(
+    "<h3 style='font-size: 20px; font-weight: bold; margin-bottom: 0px;'>🏢 한국자산관리아카데미</h3>", 
+    unsafe_allow_html=True
+)
 st.sidebar.title("📍 주소 및 조건")
 
 with st.sidebar.form(key="search_form"):
@@ -493,7 +513,6 @@ with st.sidebar.form(key="search_form"):
     
     st.markdown("<div style='margin-top: 12px;'></div>", unsafe_allow_html=True)
 
-    # 📌 부동산 종류 선택 드롭다운
     st.markdown("<p style='font-weight: bold; font-size: 16px; margin-bottom: 6px;'>부동산 유형</p>", unsafe_allow_html=True)
     property_type_input = st.selectbox(
         "부동산 유형 선택",
@@ -510,9 +529,9 @@ with st.sidebar.form(key="search_form"):
     with col_sel1:
         months_count_input = st.selectbox(
             "조회 기간",
-            options=[1, 2, 3, 6],
-            index=2,
-            format_func=lambda x: f"최근 {x}개월",
+            options=[1, 3, 6, 12],
+            index=3,
+            format_func=lambda x: f"최근 {x}개월" if x < 12 else "최근 1년 (12개월)",
             label_visibility="collapsed"
         )
 
@@ -543,7 +562,7 @@ if "candidates" not in st.session_state:
     st.session_state["candidates"] = initial_cands
     st.session_state["selected_candidate_idx"] = 0
     st.session_state["submitted_property_type"] = "아파트"
-    st.session_state["submitted_months"] = 3
+    st.session_state["submitted_months"] = 12
     st.session_state["submitted_use_radius"] = False
     st.session_state["submitted_radius"] = 1.5
 
@@ -585,15 +604,17 @@ else:
 # -----------------------------------------------------------------------------
 if selected_candidate:
     prop_type = st.session_state.get("submitted_property_type", "아파트")
-    
-    with st.spinner(f"⏳ [{prop_type}] 실거래가 데이터를 수집 중입니다..."):
+    months_opt = st.session_state.get("submitted_months", 12)
+    period_str = f"최근 {months_opt}개월" if months_opt < 12 else "최근 1년"
+
+    with st.spinner(f"⏳ [{period_str} / {prop_type}] 인근 행정구역 수집 중..."):
         lat, lng, full_address, lawd_cd, region_name, filtered_df = fetch_real_estate_for_candidate(
             selected_candidate['lat'],
             selected_candidate['lng'],
             selected_candidate['address'],
             selected_candidate['place_name'],
             prop_type,
-            st.session_state.get("submitted_months", 3),
+            months_opt,
             st.session_state.get("submitted_use_radius", False),
             st.session_state.get("submitted_radius", 1.5)
         )
@@ -609,7 +630,7 @@ if selected_candidate:
     st.markdown(f"""
     <div class="info-banner">
         📍 <b>선택 위치:</b> {full_address}<br>
-        ✅ <b>{region_name}</b>의 최근 <b>{st.session_state.get('submitted_months', 3)}개월 [{prop_type}]</b> 실거래가 총 <b>{len(filtered_df):,}건</b>을 불러왔습니다.
+        ✅ <b>인근 수집 지역({region_name})</b>의 {period_str} <b>[{prop_type}]</b> 실거래가 총 <b>{len(filtered_df):,}건</b>을 불러왔습니다.
     </div>
     """, unsafe_allow_html=True)
 
