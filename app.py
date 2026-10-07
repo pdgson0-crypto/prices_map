@@ -5,6 +5,7 @@ import pandas as pd
 import numpy as np
 import xml.etree.ElementTree as ET
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -16,8 +17,8 @@ def format_korean_price(price_manwon):
         return "0만"
     
     price = int(price_manwon)
-    uk = price // 10000  # 억 단위
-    man = price % 10000  # 만 단위
+    uk = price // 10000
+    man = price % 10000
     
     if uk > 0 and man > 0:
         return f"{uk:,}억 {man:,}만"
@@ -57,12 +58,11 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Streamlit Secrets에서 API 키 로드
 try:
     KAKAO_REST_KEY = st.secrets["KAKAO_REST_KEY"]
     MOLIT_SERVICE_KEY = st.secrets["MOLIT_SERVICE_KEY"]
     KAKAO_JS_KEY = st.secrets["KAKAO_JS_KEY"]
-except Exception as e:
+except Exception:
     st.error("⚠️ Streamlit Secrets에 API 키가 설정되지 않았습니다.")
     KAKAO_REST_KEY = ""
     MOLIT_SERVICE_KEY = ""
@@ -192,7 +192,7 @@ with open(INDEX_HTML_PATH, "w", encoding="utf-8") as f:
 kakao_map_component = components.declare_component("kakao_map_comp", path=MAP_DIR)
 
 # -----------------------------------------------------------------------------
-# 3. 초고속 세분화 캐싱 수집 엔진 (app2 방식 적용)
+# 3. 고속 수집 엔진 (멀티쓰레딩 병렬 처리 적용)
 # -----------------------------------------------------------------------------
 API_ENDPOINTS = {
     "아파트": "http://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev",
@@ -301,9 +301,9 @@ def search_location_candidates(query):
 
     return candidates
 
-# --- [app2 방식 1] 월별/지역별 국토부 실거래가 낱개 캐싱 ---
+# 단일 월/지역 국토부 API 수집 함수
 @st.cache_data(ttl=86400, show_spinner=False)
-def fetch_molit_single_month(lawd_cd, ymd, property_type):
+def fetch_molit_single_task(lawd_cd, ymd, property_type):
     api_url = API_ENDPOINTS.get(property_type, API_ENDPOINTS["아파트"])
     items_list = []
     page_no = 1
@@ -317,7 +317,7 @@ def fetch_molit_single_month(lawd_cd, ymd, property_type):
             'numOfRows': '1000'
         }
         try:
-            res = requests.get(api_url, params=params, timeout=4)
+            res = requests.get(api_url, params=params, timeout=3)
             if res.status_code == 200:
                 root = ET.fromstring(res.content)
                 items = root.findall('.//item')
@@ -374,7 +374,7 @@ def fetch_molit_single_month(lawd_cd, ymd, property_type):
 
     return items_list
 
-# --- [app2 방식 2] 단지별 좌표 검색 영구 개별 캐싱 ---
+# 단일 단지 좌표 변환 함수
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_cached_apt_coord(region_name, apt_name):
     headers = {"Authorization": f"KakaoAK {KAKAO_REST_KEY}"}
@@ -384,13 +384,15 @@ def get_cached_apt_coord(region_name, apt_name):
             geo_res = requests.get(geo_url, headers=headers, timeout=2).json()
             if geo_res.get('documents'):
                 doc = geo_res['documents'][0]
-                return float(doc['y']), float(doc['x'])
+                return apt_name, float(doc['y']), float(doc['x'])
         except Exception:
             pass
-    return None, None
+    return apt_name, None, None
 
-# --- [app2 통합 실행 엔진] ---
-def fetch_real_estate_fast(lat, lng, full_address, place_name, property_type, months_count, use_radius_limit, radius):
+# -----------------------------------------------------------------------------
+# 4. 병렬 처리 기반 메인 수집 함수 (속도 핵심)
+# -----------------------------------------------------------------------------
+def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_type, months_count, use_radius_limit, radius):
     display_addr = full_address if full_address else place_name
     search_radius = radius if use_radius_limit else 2.5
     lawd_info = get_nearby_lawd_codes(lat, lng, radius_km=search_radius)
@@ -401,27 +403,36 @@ def fetch_real_estate_fast(lat, lng, full_address, place_name, property_type, mo
     region_names_str = ", ".join(list(set(lawd_info.values())))
     months_list = get_recent_months(months_count)
     
-    raw_items = []
-    # 1. 낱개 캐싱된 월별 실거래 수집 함수 호출
+    # [핵심 1] 국토부 API 병렬 수집 (최대 16개 쓰레드)
+    tasks = []
     for lawd_cd in lawd_info.keys():
         for ymd in months_list:
-            m_items = fetch_molit_single_month(lawd_cd, ymd, property_type)
-            raw_items.extend(m_items)
+            tasks.append((lawd_cd, ymd, property_type))
+
+    raw_items = []
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        futures = [executor.submit(fetch_molit_single_task, code, ymd, ptype) for code, ymd, ptype in tasks]
+        for future in as_completed(futures):
+            res = future.result()
+            if res:
+                raw_items.extend(res)
 
     if not raw_items:
         return lat, lng, display_addr, "", region_names_str, pd.DataFrame()
 
-    # 2. 유니크 단지명 추출 및 개별 캐싱 함수 호출
-    unique_apt_names = set(item['apt_name'] for item in raw_items)
+    # [핵심 2] 단지 좌표 카카오 API 병렬 변환 (최대 20개 쓰레드)
+    unique_apt_names = list(set(item['apt_name'] for item in raw_items))
     coord_cache = {}
-    
-    for apt_name in unique_apt_names:
-        c_lat, c_lng = get_cached_apt_coord(region_names_str, apt_name)
-        if c_lat is not None:
-            c_dist = haversine_distance(lat, lng, c_lat, c_lng)
-            coord_cache[apt_name] = (c_lat, c_lng, c_dist)
 
-    # 3. 실거래 데이터와 좌표 결합 및 거리 필터링
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = [executor.submit(get_cached_apt_coord, region_names_str, apt) for apt in unique_apt_names]
+        for future in as_completed(futures):
+            apt_name, c_lat, c_lng = future.result()
+            if c_lat is not None and c_lng is not None:
+                c_dist = haversine_distance(lat, lng, c_lat, c_lng)
+                coord_cache[apt_name] = (c_lat, c_lng, c_dist)
+
+    # 거리 필터링 및 DataFrame 구성
     valid_trades = []
     rad_limit = radius if use_radius_limit else 999.0
 
@@ -451,7 +462,7 @@ def fetch_real_estate_fast(lat, lng, full_address, place_name, property_type, mo
     return lat, lng, display_addr, "", region_names_str, df
 
 # -----------------------------------------------------------------------------
-# 4. 중앙 정렬 HTML 표 출력 함수
+# 5. 중앙 정렬 HTML 표 출력 함수
 # -----------------------------------------------------------------------------
 def render_custom_centered_table(df):
     if df.empty:
@@ -486,7 +497,7 @@ def render_custom_centered_table(df):
     st.markdown("\n".join(html_lines), unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 5. 세션 상태 초기화 및 콜백
+# 6. 세션 상태 초기화 및 UI
 # -----------------------------------------------------------------------------
 def reset_filter_callback():
     st.session_state["select_apt_dropdown"] = "전체 보기"
@@ -497,9 +508,6 @@ if "select_apt_dropdown" not in st.session_state:
 if "last_click_ts" not in st.session_state:
     st.session_state["last_click_ts"] = None
 
-# -----------------------------------------------------------------------------
-# 6. 메인 UI 및 사이드바 (app.py 구조 적용)
-# -----------------------------------------------------------------------------
 st.sidebar.markdown(
     "<h3 style='font-size: 20px; font-weight: bold; margin-bottom: 0px;'>🏢 한국자산관리아카데미</h3>", 
     unsafe_allow_html=True
@@ -559,7 +567,6 @@ with st.sidebar.form(key="search_form"):
 
     search_button = st.form_submit_button("🔍 위치 검색", use_container_width=True)
 
-# 초기 접속 시 기본 검색어 설정
 if "candidates" not in st.session_state:
     initial_cands = search_location_candidates("호수로 688")
     st.session_state["candidates"] = initial_cands
@@ -603,7 +610,7 @@ else:
     st.sidebar.warning("⚠️ 검색된 위치가 없습니다. 다른 검색어를 입력해 보세요.")
 
 # -----------------------------------------------------------------------------
-# 7. 선택된 위치 기준 지도 및 실거래가 출력
+# 7. 메인 지도 및 결과 출력
 # -----------------------------------------------------------------------------
 if selected_candidate:
     prop_type = st.session_state.get("submitted_property_type", "아파트")
@@ -614,7 +621,7 @@ if selected_candidate:
     spinner_message = f"⏳ [{display_address_str}]의 {period_str} [{prop_type}] 거래 정보를 수집 중입니다..."
 
     with st.spinner(spinner_message):
-        lat, lng, full_address, lawd_cd, region_name, filtered_df = fetch_real_estate_fast(
+        lat, lng, full_address, lawd_cd, region_name, filtered_df = fetch_real_estate_ultra_fast(
             selected_candidate['lat'],
             selected_candidate['lng'],
             selected_candidate['address'],
@@ -632,7 +639,6 @@ if selected_candidate:
     if st.session_state["select_apt_dropdown"] not in apt_options:
         st.session_state["select_apt_dropdown"] = "전체 보기"
 
-    # 상단 요약 배너
     st.markdown(f"""
     <div class="info-banner">
         📍 <b>선택 위치:</b> {full_address}<br>
@@ -642,7 +648,6 @@ if selected_candidate:
 
     col_map, col_detail = st.columns([1, 1], gap="medium")
 
-    # --- [좌측 : 카카오 지도] ---
     with col_map:
         st.subheader("🗺️ 부동산 실거래 지도")
 
@@ -694,7 +699,6 @@ if selected_candidate:
                 st.session_state["select_apt_dropdown"] = clicked_apt
                 st.rerun()
 
-    # --- [우측 : 물건 상세 내용] ---
     with col_detail:
         st.subheader("📊 물건 상세 내용")
 
