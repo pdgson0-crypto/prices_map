@@ -304,7 +304,7 @@ def search_location_candidates(query):
 
     return candidates
 
-# 📌 단일 API 요청을 처리하는 보조 함수 (멀티스레딩용)
+# 📌 부동산 유형별 올바른 XML 태그명 매칭 파서
 def fetch_single_api_request(api_url, lawd_cd, ymd, property_type):
     page_no = 1
     local_items = []
@@ -325,25 +325,32 @@ def fetch_single_api_request(api_url, lawd_cd, ymd, property_type):
                     break
                 
                 for item in items:
+                    # 유형별 이름 태그 매칭
                     if property_type == "아파트":
                         apt_name = item.findtext('aptNm', default='아파트').strip()
                     elif property_type == "연립/다세대":
-                        apt_name = item.findtext('mhbNm', default='연립다세대').strip()
+                        apt_name = item.findtext('mblNm', default=item.findtext('buildNm', default='연립다세대')).strip()
                     elif property_type == "오피스텔":
                         apt_name = item.findtext('offiNm', default='오피스텔').strip()
                     elif property_type == "단독/다가구":
                         apt_name = item.findtext('houseType', default='단독/다가구').strip()
                     elif property_type == "토지":
-                        apt_name = f"토지({item.findtext('jimok', default='-').strip()})"
+                        jimok = item.findtext('jimok', default='').strip()
+                        apt_name = f"토지({jimok})" if jimok else "토지"
                     else:
                         apt_name = "부동산"
 
                     price_str = item.findtext('dealAmount', default='0').replace(',', '').strip()
                     
+                    # 유형별 면적 태그 매칭
                     if property_type == "토지":
                         area_val = item.findtext('plottageArea', default='0')
                     elif property_type == "단독/다가구":
                         area_val = item.findtext('totalFloorArea', default='0')
+                    elif property_type == "오피스텔":
+                        area_val = item.findtext('excluUseAr', default='0')
+                    elif property_type == "연립/다세대":
+                        area_val = item.findtext('excluUseAr', default='0')
                     else:
                         area_val = item.findtext('excluUseAr', default='0')
                     
@@ -358,7 +365,7 @@ def fetch_single_api_request(api_url, lawd_cd, ymd, property_type):
                     local_items.append({
                         "apt_name": apt_name,
                         "umd_name": umd_name,
-                        "price": int(price_str),
+                        "price": int(price_str) if price_str.isdigit() else 0,
                         "area": area,
                         "floor": f"{floor_val}층" if floor_val else "-",
                         "deal_date": f"{deal_year}-{deal_month}-{deal_day}"
@@ -388,7 +395,6 @@ def fetch_real_estate_for_candidate(lat, lng, full_address, place_name, property
     raw_items = []
     api_url = API_ENDPOINTS.get(property_type, API_ENDPOINTS["아파트"])
     
-    # 📌 [속도 개선] 병렬 처리(ThreadPoolExecutor)를 이용해 여러 월/구 API 요청을 동시에 실행
     tasks = []
     for lawd_cd in lawd_info.keys():
         for ymd in months_list:
@@ -549,7 +555,7 @@ with st.sidebar.form(key="search_form"):
     with col_lbl2:
         st.markdown("<p style='margin-top: 4px; font-weight: bold; font-size: 16px;'>검색 반경(km) 제한</p>", unsafe_allow_html=True)
     with col_chk2:
-        use_radius_limit_input = st.checkbox("<p style='margin-top: 4px; font-weight: bold; font-size: 50px;'>", value=True, label_visibility="collapsed")
+        use_radius_limit_input = st.checkbox("<p style='margin-top: 4px; font-weight: bold; font-size: 50px;'>", value=False, label_visibility="collapsed")
         
     radius_input = st.slider(
         "반경 범위 (km)", 
@@ -559,11 +565,7 @@ with st.sidebar.form(key="search_form"):
         step=0.1,
         label_visibility="collapsed"
     )
-    
-    st.sidebar.caption("ℹ️ **반경 제한 안내**: 체크 시 중심지 인근의 가까운 데이터만 빠르게 조회합니다. 전체 구를 넓게 보려면 체크를 해제하세요.")
-
     st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
-
     search_button = st.form_submit_button("🔍 위치 검색", use_container_width=True)
 
 # 초기 접속 시 검색
