@@ -12,12 +12,6 @@ import streamlit.components.v1 as components
 # 0. 만원 단위 숫자를 'X억 Y만' 한글 단위로 변환하는 함수
 # -----------------------------------------------------------------------------
 def format_korean_price(price_manwon):
-    """
-    만원 단위 숫자를 'X억 Y만' 형식으로 변환합니다.
-    예: 200000 -> 20억
-        205000 -> 20억 5,000만
-        8500   -> 8,500만
-    """
     if pd.isna(price_manwon) or price_manwon <= 0:
         return "0만"
     
@@ -55,7 +49,6 @@ st.markdown("""
         max-width: 500px !important;
     }
 
-    /* 체크박스 전체 요소를 1.6배 확대하는 CSS */
     div[data-testid="stCheckbox"] {
         transform: scale(1.6) !important;
         transform-origin: left center !important;
@@ -168,7 +161,6 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
 
                         var div = document.createElement('div');
                         div.style.cssText = 'cursor:pointer; padding:6px 10px; background:white; color:#2c3e50; border:2px solid #e74c3c; border-radius:10px; font-weight:bold; font-size:12px; box-shadow:0 2px 6px rgba(0,0,0,0.25); text-align:center; user-select:none;';
-                        /* 억/만 단위 적용된 avg_price_fmt 사용 */
                         div.innerHTML = item.apt_name + '<br><span style="color:#e74c3c; font-size:13px;">평균 ' + item.avg_price_fmt + '</span> <span style="font-size:11px; color:#7f8c8d;">(' + item.count + '건)</span>';
 
                         div.addEventListener('click', function(e) {
@@ -200,8 +192,16 @@ with open(INDEX_HTML_PATH, "w", encoding="utf-8") as f:
 kakao_map_component = components.declare_component("kakao_map_comp", path=MAP_DIR)
 
 # -----------------------------------------------------------------------------
-# 3. 장소 검색 및 실거래가 수집 함수
+# 3. 부동산 종류별 국토부 API 엔드포인트 매핑
 # -----------------------------------------------------------------------------
+API_ENDPOINTS = {
+    "아파트": "http://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev",
+    "연립/다세대": "http://apis.data.go.kr/1613000/RTMSDataSvcRHTradeDev/getRTMSDataSvcRHTradeDev",
+    "단독/다가구": "http://apis.data.go.kr/1613000/RTMSDataSvcSHTrade/getRTMSDataSvcSHTrade",
+    "오피스텔": "http://apis.data.go.kr/1613000/RTMSDataSvcOffiTrade/getRTMSDataSvcOffiTrade",
+    "토지": "http://apis.data.go.kr/1613000/RTMSDataSvcLandTrade/getRTMSDataSvcLandTrade"
+}
+
 def haversine_distance(lat1, lon1, lat2, lon2):
     R = 6371.0
     dlat = np.radians(lat2 - lat1)
@@ -275,7 +275,7 @@ def search_location_candidates(query):
     return candidates
 
 @st.cache_data(show_spinner=False, ttl=3600)
-def fetch_real_estate_for_candidate(lat, lng, full_address, place_name, months_count, use_radius_limit, radius):
+def fetch_real_estate_for_candidate(lat, lng, full_address, place_name, property_type, months_count, use_radius_limit, radius):
     headers = {"Authorization": f"KakaoAK {KAKAO_REST_KEY}"}
     lawd_cd = None
     region_name = "알 수 없는 지역"
@@ -297,41 +297,76 @@ def fetch_real_estate_for_candidate(lat, lng, full_address, place_name, months_c
 
     months_list = get_recent_months(months_count)
     raw_items = []
+    api_url = API_ENDPOINTS.get(property_type, API_ENDPOINTS["아파트"])
     
+    # 1000건 제한 방지를 위한 페이지네이션 수집
     for ymd in months_list:
-        api_url = "http://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev"
-        params = {
-            'serviceKey': requests.utils.unquote(MOLIT_SERVICE_KEY),
-            'LAWD_CD': lawd_cd,
-            'DEAL_YMD': ymd,
-            'pageNo': '1',
-            'numOfRows': '1000'
-        }
-        try:
-            res = requests.get(api_url, params=params, timeout=5)
-            if res.status_code == 200:
-                root = ET.fromstring(res.content)
-                items = root.findall('.//item')
-                for item in items:
-                    apt_name = item.findtext('aptNm', default='아파트').strip()
-                    price_str = item.findtext('dealAmount', default='0').replace(',', '').strip()
-                    area = float(item.findtext('excluUseAr', default='0'))
-                    umd_name = item.findtext('umdNm', default='').strip()
-                    floor_val = item.findtext('floor', default='').strip()
-                    deal_year = item.findtext('dealYear', default='')
-                    deal_month = item.findtext('dealMonth', default='').zfill(2)
-                    deal_day = item.findtext('dealDay', default='').zfill(2)
+        page_no = 1
+        while True:
+            params = {
+                'serviceKey': requests.utils.unquote(MOLIT_SERVICE_KEY),
+                'LAWD_CD': lawd_cd,
+                'DEAL_YMD': ymd,
+                'pageNo': str(page_no),
+                'numOfRows': '1000'
+            }
+            try:
+                res = requests.get(api_url, params=params, timeout=5)
+                if res.status_code == 200:
+                    root = ET.fromstring(res.content)
+                    items = root.findall('.//item')
+                    if not items:
+                        break
                     
-                    raw_items.append({
-                        "apt_name": apt_name,
-                        "umd_name": umd_name,
-                        "price": int(price_str),
-                        "area": area,
-                        "floor": f"{floor_val}층" if floor_val else "-",
-                        "deal_date": f"{deal_year}-{deal_month}-{deal_day}"
-                    })
-        except Exception:
-            continue
+                    for item in items:
+                        # 유형별 건물명 / 물건명 추출
+                        if property_type == "아파트":
+                            apt_name = item.findtext('aptNm', default='아파트').strip()
+                        elif property_type == "연립/다세대":
+                            apt_name = item.findtext('mhbNm', default='연립다세대').strip()
+                        elif property_type == "오피스텔":
+                            apt_name = item.findtext('offiNm', default='오피스텔').strip()
+                        elif property_type == "단독/다가구":
+                            apt_name = item.findtext('houseType', default='단독/다가구').strip()
+                        elif property_type == "토지":
+                            apt_name = f"토지({item.findtext('jimok', default='-').strip()})"
+                        else:
+                            apt_name = "부동산"
+
+                        price_str = item.findtext('dealAmount', default='0').replace(',', '').strip()
+                        
+                        # 면적 추출 (토지는 대지면적 plottageArea)
+                        if property_type == "토지":
+                            area_val = item.findtext('plottageArea', default='0')
+                        elif property_type == "단독/다가구":
+                            area_val = item.findtext('totalFloorArea', default='0')
+                        else:
+                            area_val = item.findtext('excluUseAr', default='0')
+                        
+                        area = float(area_val) if area_val else 0.0
+                        umd_name = item.findtext('umdNm', default='').strip()
+                        floor_val = item.findtext('floor', default='').strip()
+                        
+                        deal_year = item.findtext('dealYear', default='')
+                        deal_month = item.findtext('dealMonth', default='').zfill(2)
+                        deal_day = item.findtext('dealDay', default='').zfill(2)
+                        
+                        raw_items.append({
+                            "apt_name": apt_name,
+                            "umd_name": umd_name,
+                            "price": int(price_str),
+                            "area": area,
+                            "floor": f"{floor_val}층" if floor_val else "-",
+                            "deal_date": f"{deal_year}-{deal_month}-{deal_day}"
+                        })
+                    
+                    if len(items) < 1000:
+                        break
+                    page_no += 1
+                else:
+                    break
+            except Exception:
+                break
 
     coord_cache = {}
     valid_trades = []
@@ -339,22 +374,42 @@ def fetch_real_estate_for_candidate(lat, lng, full_address, place_name, months_c
 
     for trade in raw_items:
         key = f"{trade['umd_name']} {trade['apt_name']}"
+        
         if key not in coord_cache:
-            geo_url = f"https://dapi.kakao.com/v2/local/search/keyword.json?query={key}"
+            c_lat, c_lng = None, None
+            # 1차 검색: 법정동 + 물건명
             try:
+                geo_url = f"https://dapi.kakao.com/v2/local/search/keyword.json?query={key}"
                 geo_res = requests.get(geo_url, headers=headers, timeout=3).json()
                 if geo_res.get('documents'):
                     doc = geo_res['documents'][0]
                     c_lat, c_lng = float(doc['y']), float(doc['x'])
-                    c_dist = haversine_distance(lat, lng, c_lat, c_lng)
-                    coord_cache[key] = (c_lat, c_lng, c_dist)
-                else:
-                    coord_cache[key] = (None, None, 999)
             except Exception:
-                coord_cache[key] = (None, None, 999)
+                pass
+            
+            # 2차 검색: 1차 실패 시 물건명만 검색
+            if c_lat is None:
+                try:
+                    geo_url2 = f"https://dapi.kakao.com/v2/local/search/keyword.json?query={trade['apt_name']}"
+                    geo_res2 = requests.get(geo_url2, headers=headers, timeout=3).json()
+                    if geo_res2.get('documents'):
+                        doc2 = geo_res2['documents'][0]
+                        c_lat, c_lng = float(doc2['y']), float(doc2['x'])
+                except Exception:
+                    pass
+
+            # 3차 예외 처리: 위치 검색 실패 시 기본 좌표 할당 (데이터 누락 방지)
+            if c_lat is None:
+                c_lat, c_lng = lat, lng
+                c_dist = 0.0
+            else:
+                c_dist = haversine_distance(lat, lng, c_lat, c_lng)
+
+            coord_cache[key] = (c_lat, c_lng, c_dist)
         
         c_lat, c_lng, c_dist = coord_cache[key]
-        if c_lat and c_dist <= rad_limit:
+        
+        if not use_radius_limit or c_dist <= rad_limit:
             trade_item = trade.copy()
             trade_item['lat'] = c_lat
             trade_item['lng'] = c_lng
@@ -368,7 +423,7 @@ def fetch_real_estate_for_candidate(lat, lng, full_address, place_name, months_c
     df = df.rename(columns={
         "apt_name": "물건명",
         "price": "매매가(만원)",
-        "area": "전용면적(㎡)",
+        "area": "면적(㎡)",
         "floor": "층수",
         "deal_date": "계약일"
     })
@@ -376,7 +431,7 @@ def fetch_real_estate_for_candidate(lat, lng, full_address, place_name, months_c
     return lat, lng, display_addr, lawd_cd, region_name, df
 
 # -----------------------------------------------------------------------------
-# 4. 중앙 정렬 HTML 표 출력 함수 (한글 단위 적용)
+# 4. 중앙 정렬 HTML 표 출력 함수
 # -----------------------------------------------------------------------------
 def render_custom_centered_table(df):
     if df.empty:
@@ -395,14 +450,13 @@ def render_custom_centered_table(df):
         "</style>",
         "<div class='tbl-container'>",
         "<table class='center-tbl'>",
-        "<thead><tr><th style='width:8%;'>NO</th><th style='width:36%;'>물건명</th><th style='width:16%;'>전용면적(㎡)</th><th style='width:10%;'>층수</th><th style='width:15%;'>매매가</th><th style='width:15%;'>계약일</th></tr></thead>",
+        "<thead><tr><th style='width:8%;'>NO</th><th style='width:36%;'>물건명</th><th style='width:16%;'>면적(㎡)</th><th style='width:10%;'>층수</th><th style='width:15%;'>매매가</th><th style='width:15%;'>계약일</th></tr></thead>",
         "<tbody>"
     ]
 
     for idx, row in df.reset_index(drop=True).iterrows():
-        # 한글 단위 함수 적용 (예: 20억 5,000만)
         p_val = format_korean_price(row['매매가(만원)'])
-        a_val = f"{float(row['전용면적(㎡)']):.1f}" if pd.notnull(row['전용면적(㎡)']) else "0.0"
+        a_val = f"{float(row['면적(㎡)']):.1f}" if pd.notnull(row['면적(㎡)']) else "0.0"
         
         html_lines.append(
             f"<tr><td>{idx+1}</td><td>{row['물건명']}</td><td>{a_val}</td><td>{row['층수']}</td><td>{p_val}</td><td>{row['계약일']}</td></tr>"
@@ -436,9 +490,19 @@ with st.sidebar.form(key="search_form"):
         value="호수로 688", 
         label_visibility="collapsed"
     )
-    st.caption("ℹ️ 국토교통부 API 특성상 시/군/구 단위로 조회되어 광역 단위 검색은 제한됩니다.")
+    
+    st.markdown("<div style='margin-top: 12px;'></div>", unsafe_allow_html=True)
 
-    st.markdown("<div style='margin-top: 16px;'></div>", unsafe_allow_html=True)
+    # 📌 부동산 종류 선택 드롭다운
+    st.markdown("<p style='font-weight: bold; font-size: 16px; margin-bottom: 6px;'>부동산 유형</p>", unsafe_allow_html=True)
+    property_type_input = st.selectbox(
+        "부동산 유형 선택",
+        options=["아파트", "연립/다세대", "단독/다가구", "오피스텔", "토지"],
+        index=0,
+        label_visibility="collapsed"
+    )
+
+    st.markdown("<div style='margin-top: 12px;'></div>", unsafe_allow_html=True)
 
     col_lbl1, col_sel1 = st.columns([1, 1])
     with col_lbl1:
@@ -452,7 +516,7 @@ with st.sidebar.form(key="search_form"):
             label_visibility="collapsed"
         )
 
-    st.markdown("<div style='margin-top: 16px;'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='margin-top: 12px;'></div>", unsafe_allow_html=True)
 
     col_lbl2, col_chk2 = st.columns([1, 1])
     with col_lbl2:
@@ -478,6 +542,7 @@ if "candidates" not in st.session_state:
     initial_cands = search_location_candidates("호수로 688")
     st.session_state["candidates"] = initial_cands
     st.session_state["selected_candidate_idx"] = 0
+    st.session_state["submitted_property_type"] = "아파트"
     st.session_state["submitted_months"] = 3
     st.session_state["submitted_use_radius"] = False
     st.session_state["submitted_radius"] = 1.5
@@ -488,6 +553,7 @@ if search_button:
     st.session_state["selected_candidate_idx"] = 0
     st.session_state["select_apt_dropdown"] = "전체 보기"
     st.session_state["last_click_ts"] = None
+    st.session_state["submitted_property_type"] = property_type_input
     st.session_state["submitted_months"] = months_count_input
     st.session_state["submitted_use_radius"] = use_radius_limit_input
     st.session_state["submitted_radius"] = radius_input
@@ -518,12 +584,15 @@ else:
 # 7. 선택된 후보 장소 기준 지도 및 실거래가 표현
 # -----------------------------------------------------------------------------
 if selected_candidate:
-    with st.spinner("⏳ 선택된 위치의 실거래가 데이터를 수집 중입니다..."):
+    prop_type = st.session_state.get("submitted_property_type", "아파트")
+    
+    with st.spinner(f"⏳ [{prop_type}] 실거래가 데이터를 수집 중입니다..."):
         lat, lng, full_address, lawd_cd, region_name, filtered_df = fetch_real_estate_for_candidate(
             selected_candidate['lat'],
             selected_candidate['lng'],
             selected_candidate['address'],
             selected_candidate['place_name'],
+            prop_type,
             st.session_state.get("submitted_months", 3),
             st.session_state.get("submitted_use_radius", False),
             st.session_state.get("submitted_radius", 1.5)
@@ -540,7 +609,7 @@ if selected_candidate:
     st.markdown(f"""
     <div class="info-banner">
         📍 <b>선택 위치:</b> {full_address}<br>
-        ✅ <b>{region_name}</b>의 최근 <b>{st.session_state.get('submitted_months', 3)}개월</b> 실거래가 총 <b>{len(filtered_df):,}건</b>을 불러왔습니다.
+        ✅ <b>{region_name}</b>의 최근 <b>{st.session_state.get('submitted_months', 3)}개월 [{prop_type}]</b> 실거래가 총 <b>{len(filtered_df):,}건</b>을 불러왔습니다.
     </div>
     """, unsafe_allow_html=True)
 
@@ -570,7 +639,6 @@ if selected_candidate:
             for _, r in apt_grp.iterrows():
                 apt_summary_list.append({
                     "apt_name": r['물건명'],
-                    # 평균가를 억/만 단위로 변환해서 오버레이에 표시
                     "avg_price_fmt": format_korean_price(r['평균매매가']),
                     "count": int(r['거래건수']),
                     "lat": float(r['lat']),
@@ -604,13 +672,13 @@ if selected_candidate:
         st.subheader("📊 물건 상세 내용")
 
         if not filtered_df.empty:
-            st.markdown("<p style='font-weight: bold; margin-bottom: 5px; font-size: 15px;'>🔍 단지 검색 필터</p>", unsafe_allow_html=True)
+            st.markdown("<p style='font-weight: bold; margin-bottom: 5px; font-size: 15px;'>🔍 상세 검색 필터</p>", unsafe_allow_html=True)
             
             col_sel, col_btn = st.columns([4, 1])
             
             with col_sel:
                 st.selectbox(
-                    "단지 선택",
+                    "물건 선택",
                     apt_options,
                     key="select_apt_dropdown",
                     label_visibility="collapsed"
@@ -631,9 +699,8 @@ if selected_candidate:
                 st.info(f"🏢 **{active_apt}** ({len(display_df)}건) | 💰 **평균 매매가:** {avg_price_str}")
             else:
                 display_df = filtered_df.copy()
-                st.caption("💡 지도의 마커를 클릭하면 해당 단지만 필터링됩니다.")
+                st.caption("💡 지도의 마커를 클릭하면 해당 물건만 필터링됩니다.")
 
-            # 한글 단위 표 출력을 위해 render_custom_centered_table 호출
             render_custom_centered_table(display_df)
         else:
-            st.info("표시할 상세 데이터가 없습니다.")
+            st.info(f"해당 지역 및 조회 기간 내 [{prop_type}] 실거래가 데이터가 없습니다.")
