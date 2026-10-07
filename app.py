@@ -509,7 +509,7 @@ with st.sidebar.form(key="search_form"):
 
     st.markdown("<div style='margin-top: 12px;'></div>", unsafe_allow_html=True)
 
-    st.markdown("<p style='font-weight: bold; font-size: 16px; margin-bottom: 6px;'>조회 기간 (1년 이상)</p>", unsafe_allow_html=True)
+    st.markdown("<p style='font-weight: bold; font-size: 16px; margin-bottom: 6px;'>조회 기간</p>", unsafe_allow_html=True)
     months_count_input = st.selectbox(
         "조회 기간 선택",
         options=[12, 24, 36],
@@ -520,8 +520,9 @@ with st.sidebar.form(key="search_form"):
 
     st.markdown("<div style='margin-top: 12px;'></div>", unsafe_allow_html=True)
     
-    # [i] 설명 박스 추가
-    st.info("ℹ️ 검색 위치를 중심으로 인근 지역의 실거래 데이터를 자동으로 분석하여 지도에 표시합니다.")
+    # [i] 안내 문구 2개 추가
+    st.info("ℹ️ 검색 위치 인근 지역의 실거래 데이터를 표시합니다.")
+    st.info("ℹ️ 검색 조건에 따라 데이터를 불러오는 시간이 다소 소요될 수 있습니다.")
 
     search_button = st.form_submit_button("🔍 위치 검색", use_container_width=True)
 
