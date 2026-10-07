@@ -222,19 +222,21 @@ def get_recent_months(n=12):
         months.append(f"{year:04d}{month:02d}")
     return months
 
-# 📌 중심점 주변의 여러 행정구역(시/군/구 법정동 코드)을 탐색하는 함수
-def get_nearby_lawd_codes(lat, lng, radius_km=2.0):
+# 📌 중심점 주변의 행정구역(시/군/구 법정동 코드)을 탐색하는 함수
+def get_nearby_lawd_codes(lat, lng, radius_km=2.0, use_radius=False):
     headers = {"Authorization": f"KakaoAK {KAKAO_REST_KEY}"}
     lawd_info = {} # {lawd_cd: region_name}
     
-    # 반경 오프셋 약 (1km = 약 0.009도)
-    offset = (radius_km / 111.0)
+    # 반경 제한이 켜져 있으면 인근 포인트 검출 범위를 반경에 맞춰 좁힘
+    effective_radius = radius_km if use_radius else 2.5
+    offset = (effective_radius / 111.0)
+    
     check_points = [
         (lat, lng), # 중심점
-        (lat + offset, lng), # 북
-        (lat - offset, lng), # 남
-        (lat, lng + offset), # 동
-        (lat, lng - offset)  # 서
+        (lat + offset, lng),
+        (lat - offset, lng),
+        (lat, lng + offset),
+        (lat, lng - offset)
     ]
     
     for c_lat, c_lng in check_points:
@@ -243,7 +245,7 @@ def get_nearby_lawd_codes(lat, lng, radius_km=2.0):
             reg_res = requests.get(region_url, headers=headers, timeout=3)
             if reg_res.status_code == 200 and reg_res.json().get('documents'):
                 reg_doc = reg_res.json()['documents'][0]
-                code = reg_doc['code'][:5]
+                code = reg_doc['code'][:5] # 구 단위 코드 (국토부 API 규격)
                 name = f"{reg_doc.get('region_1depth_name', '')} {reg_doc.get('region_2depth_name', '')}".strip()
                 lawd_info[code] = name
         except Exception:
@@ -308,9 +310,8 @@ def fetch_real_estate_for_candidate(lat, lng, full_address, place_name, property
     headers = {"Authorization": f"KakaoAK {KAKAO_REST_KEY}"}
     display_addr = full_address if full_address else place_name
 
-    # 📌 인근 구/시 법정동 코드 자동 추출 (구가 달라도 모두 수집)
-    search_radius = radius if use_radius_limit else 2.5
-    lawd_info = get_nearby_lawd_codes(lat, lng, radius_km=search_radius)
+    # 📌 반경 제한 여부에 따른 법정동 코드 수집 조절
+    lawd_info = get_nearby_lawd_codes(lat, lng, radius_km=radius, use_radius=use_radius_limit)
     
     if not lawd_info:
         return lat, lng, display_addr, "", "지역 정보 없음", pd.DataFrame()
@@ -320,7 +321,7 @@ def fetch_real_estate_for_candidate(lat, lng, full_address, place_name, property
     raw_items = []
     api_url = API_ENDPOINTS.get(property_type, API_ENDPOINTS["아파트"])
     
-    # 여러 법정동(구)에 대해 각각 국토부 API 수집
+    # 선택된 법정동(구)에 대해 각각 국토부 API 수집
     for lawd_cd in lawd_info.keys():
         for ymd in months_list:
             page_no = 1
@@ -392,12 +393,11 @@ def fetch_real_estate_for_candidate(lat, lng, full_address, place_name, property
     valid_trades = []
     rad_limit = radius if use_radius_limit else 999.0
 
-    # 📌 1단계: 전체 거래 중 '물건명(아파트명)'별로 대표 좌표를 딱 한 번씩만 구함 (속도 대폭 향상의 핵심!)
+    # 📌 1단계: 유니크한 아파트 단지명별로 좌표를 한 번씩만 검색 후 반경 내 항목만 필터링
     unique_apt_names = set(item['apt_name'] for item in raw_items)
     
     for apt_name in unique_apt_names:
         c_lat, c_lng = None, None
-        # 법정동명 조합 또는 아파트 이름으로 카카오 좌표 검색
         for query_str in [f"{region_names_str} {apt_name}", apt_name]:
             try:
                 geo_url = f"https://dapi.kakao.com/v2/local/search/keyword.json?query={query_str}"
@@ -409,23 +409,22 @@ def fetch_real_estate_for_candidate(lat, lng, full_address, place_name, property
             except Exception:
                 pass
         
-        # 좌표를 못 찾은 단지는 마커 쏠림 방지를 위해 스킵
         if c_lat is not None:
             c_dist = haversine_distance(lat, lng, c_lat, c_lng)
-            coord_cache[apt_name] = (c_lat, c_lng, c_dist)
+            # 반경 제한이 켜져 있으면 설정된 거리 내에 있는 아파트만 캐시에 포함
+            if not use_radius_limit or c_dist <= rad_limit:
+                coord_cache[apt_name] = (c_lat, c_lng, c_dist)
 
-    # 📌 2단계: 미리 구해둔 좌표 캐시를 거래 내역에 빠르게 매핑
+    # 📌 2단계: 좌표 캐시를 거래 내역에 매핑
     for trade in raw_items:
         apt_name = trade['apt_name']
         if apt_name in coord_cache:
             c_lat, c_lng, c_dist = coord_cache[apt_name]
-            
-            if not use_radius_limit or c_dist <= rad_limit:
-                trade_item = trade.copy()
-                trade_item['lat'] = c_lat
-                trade_item['lng'] = c_lng
-                trade_item['거리(km)'] = c_dist
-                valid_trades.append(trade_item)
+            trade_item = trade.copy()
+            trade_item['lat'] = c_lat
+            trade_item['lng'] = c_lng
+            trade_item['거리(km)'] = c_dist
+            valid_trades.append(trade_item)
 
     if not valid_trades:
         return lat, lng, display_addr, "", region_names_str, pd.DataFrame()
@@ -535,7 +534,8 @@ with st.sidebar.form(key="search_form"):
     with col_lbl2:
         st.markdown("<p style='margin-top: 4px; font-weight: bold; font-size: 16px;'>검색 반경(km) 제한</p>", unsafe_allow_html=True)
     with col_chk2:
-        use_radius_limit_input = st.checkbox("<p style='margin-top: 4px; font-weight: bold; font-size: 50px;'>", value=False, label_visibility="collapsed")
+        # 📌 반경 제한 체크박스 기본값 True로 설정
+        use_radius_limit_input = st.checkbox("<p style='margin-top: 4px; font-weight: bold; font-size: 50px;'>", value=True, label_visibility="collapsed")
         
     radius_input = st.slider(
         "반경 범위 (km)", 
@@ -546,6 +546,9 @@ with st.sidebar.form(key="search_form"):
         label_visibility="collapsed"
     )
     
+    # 📌 안내 i 표시 및 설명 문구 추가
+    st.sidebar.caption("ℹ️ **반경 제한 안내**: 체크 시 중심지 인근의 가까운 데이터만 빠르게 조회합니다. 전체 구를 넓게 보려면 체크를 해제하세요.")
+
     st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
 
     search_button = st.form_submit_button("🔍 위치 검색", use_container_width=True)
@@ -557,7 +560,7 @@ if "candidates" not in st.session_state:
     st.session_state["selected_candidate_idx"] = 0
     st.session_state["submitted_property_type"] = "아파트"
     st.session_state["submitted_months"] = 12
-    st.session_state["submitted_use_radius"] = False
+    st.session_state["submitted_use_radius"] = True # 초기값 True 반영
     st.session_state["submitted_radius"] = 1.5
 
 if search_button:
@@ -612,7 +615,7 @@ if selected_candidate:
             selected_candidate['place_name'],
             prop_type,
             months_opt,
-            st.session_state.get("submitted_use_radius", False),
+            st.session_state.get("submitted_use_radius", True),
             st.session_state.get("submitted_radius", 1.5)
         )
 
@@ -669,7 +672,7 @@ if selected_candidate:
             center_lng=map_center_lng,
             apt_summary=apt_summary_list,
             radius_info={
-                "use": st.session_state.get("submitted_use_radius", False),
+                "use": st.session_state.get("submitted_use_radius", True),
                 "radius": st.session_state.get("submitted_radius", 1.5),
                 "lat": lat,
                 "lng": lng
