@@ -192,7 +192,7 @@ with open(INDEX_HTML_PATH, "w", encoding="utf-8") as f:
 kakao_map_component = components.declare_component("kakao_map_comp", path=MAP_DIR)
 
 # -----------------------------------------------------------------------------
-# 3. 부동산 종류별 국토부 API 엔드포인트 및 수집 함수
+# 3. 초고속 세분화 캐싱 수집 엔진 (app2 방식 적용)
 # -----------------------------------------------------------------------------
 API_ENDPOINTS = {
     "아파트": "http://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev",
@@ -301,11 +301,97 @@ def search_location_candidates(query):
 
     return candidates
 
-@st.cache_data(show_spinner=False, ttl=3600)
-def fetch_real_estate_for_candidate(lat, lng, full_address, place_name, property_type, months_count, use_radius_limit, radius):
-    headers = {"Authorization": f"KakaoAK {KAKAO_REST_KEY}"}
-    display_addr = full_address if full_address else place_name
+# --- [app2 방식 1] 월별/지역별 국토부 실거래가 낱개 캐싱 ---
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_molit_single_month(lawd_cd, ymd, property_type):
+    api_url = API_ENDPOINTS.get(property_type, API_ENDPOINTS["아파트"])
+    items_list = []
+    page_no = 1
+    
+    while True:
+        params = {
+            'serviceKey': requests.utils.unquote(MOLIT_SERVICE_KEY),
+            'LAWD_CD': lawd_cd,
+            'DEAL_YMD': ymd,
+            'pageNo': str(page_no),
+            'numOfRows': '1000'
+        }
+        try:
+            res = requests.get(api_url, params=params, timeout=4)
+            if res.status_code == 200:
+                root = ET.fromstring(res.content)
+                items = root.findall('.//item')
+                if not items:
+                    break
+                
+                for item in items:
+                    if property_type == "아파트":
+                        apt_name = item.findtext('aptNm', default='아파트').strip()
+                    elif property_type == "연립/다세대":
+                        apt_name = item.findtext('mhbNm', default='연립다세대').strip()
+                    elif property_type == "오피스텔":
+                        apt_name = item.findtext('offiNm', default='오피스텔').strip()
+                    elif property_type == "단독/다가구":
+                        apt_name = item.findtext('houseType', default='단독/다가구').strip()
+                    elif property_type == "토지":
+                        apt_name = f"토지({item.findtext('jimok', default='-').strip()})"
+                    else:
+                        apt_name = "부동산"
 
+                    price_str = item.findtext('dealAmount', default='0').replace(',', '').strip()
+                    
+                    if property_type == "토지":
+                        area_val = item.findtext('plottageArea', default='0')
+                    elif property_type == "단독/다가구":
+                        area_val = item.findtext('totalFloorArea', default='0')
+                    else:
+                        area_val = item.findtext('excluUseAr', default='0')
+                    
+                    area = float(area_val) if area_val else 0.0
+                    umd_name = item.findtext('umdNm', default='').strip()
+                    floor_val = item.findtext('floor', default='').strip()
+                    
+                    deal_year = item.findtext('dealYear', default='')
+                    deal_month = item.findtext('dealMonth', default='').zfill(2)
+                    deal_day = item.findtext('dealDay', default='').zfill(2)
+                    
+                    items_list.append({
+                        "apt_name": apt_name,
+                        "umd_name": umd_name,
+                        "price": int(price_str),
+                        "area": area,
+                        "floor": f"{floor_val}층" if floor_val else "-",
+                        "deal_date": f"{deal_year}-{deal_month}-{deal_day}"
+                    })
+                
+                if len(items) < 1000:
+                    break
+                page_no += 1
+            else:
+                break
+        except Exception:
+            break
+
+    return items_list
+
+# --- [app2 방식 2] 단지별 좌표 검색 영구 개별 캐싱 ---
+@st.cache_data(ttl=86400, show_spinner=False)
+def get_cached_apt_coord(region_name, apt_name):
+    headers = {"Authorization": f"KakaoAK {KAKAO_REST_KEY}"}
+    for query_str in [f"{region_name} {apt_name}", apt_name]:
+        try:
+            geo_url = f"https://dapi.kakao.com/v2/local/search/keyword.json?query={query_str}"
+            geo_res = requests.get(geo_url, headers=headers, timeout=2).json()
+            if geo_res.get('documents'):
+                doc = geo_res['documents'][0]
+                return float(doc['y']), float(doc['x'])
+        except Exception:
+            pass
+    return None, None
+
+# --- [app2 통합 실행 엔진] ---
+def fetch_real_estate_fast(lat, lng, full_address, place_name, property_type, months_count, use_radius_limit, radius):
+    display_addr = full_address if full_address else place_name
     search_radius = radius if use_radius_limit else 2.5
     lawd_info = get_nearby_lawd_codes(lat, lng, radius_km=search_radius)
     
@@ -314,104 +400,35 @@ def fetch_real_estate_for_candidate(lat, lng, full_address, place_name, property
 
     region_names_str = ", ".join(list(set(lawd_info.values())))
     months_list = get_recent_months(months_count)
-    raw_items = []
-    api_url = API_ENDPOINTS.get(property_type, API_ENDPOINTS["아파트"])
     
+    raw_items = []
+    # 1. 낱개 캐싱된 월별 실거래 수집 함수 호출
     for lawd_cd in lawd_info.keys():
         for ymd in months_list:
-            page_no = 1
-            while True:
-                params = {
-                    'serviceKey': requests.utils.unquote(MOLIT_SERVICE_KEY),
-                    'LAWD_CD': lawd_cd,
-                    'DEAL_YMD': ymd,
-                    'pageNo': str(page_no),
-                    'numOfRows': '1000'
-                }
-                try:
-                    res = requests.get(api_url, params=params, timeout=5)
-                    if res.status_code == 200:
-                        root = ET.fromstring(res.content)
-                        items = root.findall('.//item')
-                        if not items:
-                            break
-                        
-                        for item in items:
-                            if property_type == "아파트":
-                                apt_name = item.findtext('aptNm', default='아파트').strip()
-                            elif property_type == "연립/다세대":
-                                apt_name = item.findtext('mhbNm', default='연립다세대').strip()
-                            elif property_type == "오피스텔":
-                                apt_name = item.findtext('offiNm', default='오피스텔').strip()
-                            elif property_type == "단독/다가구":
-                                apt_name = item.findtext('houseType', default='단독/다가구').strip()
-                            elif property_type == "토지":
-                                apt_name = f"토지({item.findtext('jimok', default='-').strip()})"
-                            else:
-                                apt_name = "부동산"
+            m_items = fetch_molit_single_month(lawd_cd, ymd, property_type)
+            raw_items.extend(m_items)
 
-                            price_str = item.findtext('dealAmount', default='0').replace(',', '').strip()
-                            
-                            if property_type == "토지":
-                                area_val = item.findtext('plottageArea', default='0')
-                            elif property_type == "단독/다가구":
-                                area_val = item.findtext('totalFloorArea', default='0')
-                            else:
-                                area_val = item.findtext('excluUseAr', default='0')
-                            
-                            area = float(area_val) if area_val else 0.0
-                            umd_name = item.findtext('umdNm', default='').strip()
-                            floor_val = item.findtext('floor', default='').strip()
-                            
-                            deal_year = item.findtext('dealYear', default='')
-                            deal_month = item.findtext('dealMonth', default='').zfill(2)
-                            deal_day = item.findtext('dealDay', default='').zfill(2)
-                            
-                            raw_items.append({
-                                "apt_name": apt_name,
-                                "umd_name": umd_name,
-                                "price": int(price_str),
-                                "area": area,
-                                "floor": f"{floor_val}층" if floor_val else "-",
-                                "deal_date": f"{deal_year}-{deal_month}-{deal_day}"
-                            })
-                        
-                        if len(items) < 1000:
-                            break
-                        page_no += 1
-                    else:
-                        break
-                except Exception:
-                    break
+    if not raw_items:
+        return lat, lng, display_addr, "", region_names_str, pd.DataFrame()
 
-    coord_cache = {}
-    valid_trades = []
-    rad_limit = radius if use_radius_limit else 999.0
-
+    # 2. 유니크 단지명 추출 및 개별 캐싱 함수 호출
     unique_apt_names = set(item['apt_name'] for item in raw_items)
+    coord_cache = {}
     
     for apt_name in unique_apt_names:
-        c_lat, c_lng = None, None
-        for query_str in [f"{region_names_str} {apt_name}", apt_name]:
-            try:
-                geo_url = f"https://dapi.kakao.com/v2/local/search/keyword.json?query={query_str}"
-                geo_res = requests.get(geo_url, headers=headers, timeout=2).json()
-                if geo_res.get('documents'):
-                    doc = geo_res['documents'][0]
-                    c_lat, c_lng = float(doc['y']), float(doc['x'])
-                    break
-            except Exception:
-                pass
-        
+        c_lat, c_lng = get_cached_apt_coord(region_names_str, apt_name)
         if c_lat is not None:
             c_dist = haversine_distance(lat, lng, c_lat, c_lng)
             coord_cache[apt_name] = (c_lat, c_lng, c_dist)
+
+    # 3. 실거래 데이터와 좌표 결합 및 거리 필터링
+    valid_trades = []
+    rad_limit = radius if use_radius_limit else 999.0
 
     for trade in raw_items:
         apt_name = trade['apt_name']
         if apt_name in coord_cache:
             c_lat, c_lng, c_dist = coord_cache[apt_name]
-            
             if not use_radius_limit or c_dist <= rad_limit:
                 trade_item = trade.copy()
                 trade_item['lat'] = c_lat
@@ -481,7 +498,7 @@ if "last_click_ts" not in st.session_state:
     st.session_state["last_click_ts"] = None
 
 # -----------------------------------------------------------------------------
-# 6. 메인 UI 및 사이드바 (기존 app.py 형식 유지)
+# 6. 메인 UI 및 사이드바 (app.py 구조 적용)
 # -----------------------------------------------------------------------------
 st.sidebar.markdown(
     "<h3 style='font-size: 20px; font-weight: bold; margin-bottom: 0px;'>🏢 한국자산관리아카데미</h3>", 
@@ -542,7 +559,7 @@ with st.sidebar.form(key="search_form"):
 
     search_button = st.form_submit_button("🔍 위치 검색", use_container_width=True)
 
-# 초기 접속 시 기본 검색어
+# 초기 접속 시 기본 검색어 설정
 if "candidates" not in st.session_state:
     initial_cands = search_location_candidates("호수로 688")
     st.session_state["candidates"] = initial_cands
@@ -597,7 +614,7 @@ if selected_candidate:
     spinner_message = f"⏳ [{display_address_str}]의 {period_str} [{prop_type}] 거래 정보를 수집 중입니다..."
 
     with st.spinner(spinner_message):
-        lat, lng, full_address, lawd_cd, region_name, filtered_df = fetch_real_estate_for_candidate(
+        lat, lng, full_address, lawd_cd, region_name, filtered_df = fetch_real_estate_fast(
             selected_candidate['lat'],
             selected_candidate['lng'],
             selected_candidate['address'],
