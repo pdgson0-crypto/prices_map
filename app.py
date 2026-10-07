@@ -806,7 +806,7 @@ if selected_candidate:
     months_opt = st.session_state.get("submitted_months", 12)
     period_str = f"최근 {months_opt//12}년"
 
-    with st.spinner("🔄 해당 지역 실거래가 데이터 수집 및 위치 좌표 변환 중입니다..."):
+    with st.spinner("해당 지역 실거래가 데이터 수집 및 위치 좌표 변환 중입니다..."):
         lat, lng, full_address, lawd_cd, region_list, filtered_df = fetch_real_estate_ultra_fast(
             selected_candidate['lat'],
             selected_candidate['lng'],
