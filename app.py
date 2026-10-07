@@ -66,9 +66,31 @@ st.markdown("""
 
     /* 2. 메인 영역 상단 여백 충분히 확보 (잘림 방지) */
     .block-container {
-        padding-top: 4rem !important;
+        padding-top: 3.5rem !important;
         padding-bottom: 0rem !important;
     }
+
+    /* 3. 로딩 스피너 화면 전체 오버레이 & 중앙 정렬 (화면 밀림 방지) */
+    div[data-testid="stSpinner"] {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        height: 100vh !important;
+        background: rgba(0, 0, 0, 0.65) !important;
+        backdrop-filter: blur(2px) !important;
+        z-index: 999999 !important;
+        display: flex !important;
+        justify-content: center !important;
+        align-items: center !important;
+    }
+    div[data-testid="stSpinner"] > div {
+        background-color: #1f2937 !important;
+        padding: 20px 30px !important;
+        border-radius: 12px !important;
+        border: 1px solid #374151 !important;
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5) !important;
+        color: #ffffff !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -101,7 +123,7 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
         #map-container {
             position: relative;
             width: 100%;
-            height: 780px;
+            height: 830px; /* 기존 780px에서 50px 확대 */
             border-radius: 12px;
             overflow: hidden;
             border: 1px solid #374151;
@@ -314,7 +336,7 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
         });
 
         sendToStreamlit("streamlit:componentReady", { apiVersion: 1 });
-        sendToStreamlit("streamlit:setFrameHeight", { height: 795 });
+        sendToStreamlit("streamlit:setFrameHeight", { height: 845 }); /* 지도 높이에 맞춰 845px 설정 */
 
         function renderMap(props) {
             var centerLat = props.center_lat;
@@ -730,7 +752,6 @@ with st.sidebar.form(key="search_form"):
     )
 
     st.markdown("<div style='margin-top: 12px;'></div>", unsafe_allow_html=True)
-    st.info("ℹ️ 검색 조건에 따라 데이터를 불러오는 시간이 다소 소요될 수 있습니다.")
 
     search_button = st.form_submit_button("🔍 위치 검색", use_container_width=True)
 
@@ -773,14 +794,14 @@ else:
     st.sidebar.warning("⚠️ 검색된 위치가 없습니다. 다른 검색어를 입력해 보세요.")
 
 # -----------------------------------------------------------------------------
-# 6. 데이터 조회 (스피너 적용) & 메인 화면 (오직 지도만 표기)
+# 6. 데이터 조회 (스피너 적용) & 메인 화면 (타이틀 및 지도)
 # -----------------------------------------------------------------------------
 if selected_candidate:
     prop_type = st.session_state.get("submitted_property_type", "아파트")
     months_opt = st.session_state.get("submitted_months", 12)
     period_str = f"최근 {months_opt//12}년"
 
-    # 1. 데이터 수집 시 스피너 로딩 표시
+    # 1. 데이터 수집 시 화면 전체 중앙 덮개 스피너 표시
     with st.spinner("🔄 해당 지역 실거래가 데이터 수집 및 위치 좌표 변환 중입니다..."):
         lat, lng, full_address, lawd_cd, region_name, filtered_df = fetch_real_estate_ultra_fast(
             selected_candidate['lat'],
@@ -840,7 +861,7 @@ if selected_candidate:
         # 우측 슬라이드 패널용 거래 상세 데이터 (통합물건명으로 이름 통일)
         for _, r in filtered_df.iterrows():
             trade_list.append({
-                "apt_name": str(r['통합물건명']),  # 통합된 대표 이름 사용
+                "apt_name": str(r['통합물건명']),
                 "area": f"{float(r['면적(㎡)']):.1f}" if pd.notnull(r['면적(㎡)']) else "0.0",
                 "floor": str(r['층수']),
                 "price_raw": int(r['매매가(만원)']),
@@ -848,7 +869,9 @@ if selected_candidate:
                 "deal_date": str(r['계약일'])
             })
 
-    # 3. 메인 화면 영역: 다른 UI 요소 전면 제거 후 전체 지도만 깔끔하게 출력
+    # 3. 메인 화면 헤더 타이틀 및 지도 배치
+    st.markdown("<h2 style='font-size: 21px; font-weight: 700; color: #f3f4f6; margin-bottom: 12px; margin-top: 0px;'>🗺️ 부동산 실거래가 시세 지도</h2>", unsafe_allow_html=True)
+
     kakao_map_component(
         key="kakao_map_comp",
         center_lat=lat,
