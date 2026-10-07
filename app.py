@@ -9,6 +9,30 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 # -----------------------------------------------------------------------------
+# 0. 만원 단위 숫자를 'X억 Y만' 한글 단위로 변환하는 함수
+# -----------------------------------------------------------------------------
+def format_korean_price(price_manwon):
+    """
+    만원 단위 숫자를 'X억 Y만' 형식으로 변환합니다.
+    예: 200000 -> 20억
+        205000 -> 20억 5,000만
+        8500   -> 8,500만
+    """
+    if pd.isna(price_manwon) or price_manwon <= 0:
+        return "0만"
+    
+    price = int(price_manwon)
+    uk = price // 10000  # 억 단위
+    man = price % 10000  # 만 단위
+    
+    if uk > 0 and man > 0:
+        return f"{uk:,}억 {man:,}만"
+    elif uk > 0:
+        return f"{uk:,}억"
+    else:
+        return f"{man:,}만"
+
+# -----------------------------------------------------------------------------
 # 1. 페이지 기본 설정 및 CSS
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="부동산 실거래가 지도", layout="wide")
@@ -31,22 +55,22 @@ st.markdown("""
         max-width: 500px !important;
     }
 
-    /* 👇 체크박스 전체 요소를 1.6배 확대하는 CSS */
+    /* 체크박스 전체 요소를 1.6배 확대하는 CSS */
     div[data-testid="stCheckbox"] {
         transform: scale(1.6) !important;
-        transform-origin: left center !important;  /* 기준점을 좌측 중앙으로 설정 */
-        margin-top: 4px !important;                 /* 좌측 텍스트와 세로 높이 맞춤 */
+        transform-origin: left center !important;
+        margin-top: 4px !important;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# Streamlit Secrets에서 API 키 안전하게 로드
+# Streamlit Secrets에서 API 키 로드
 try:
     KAKAO_REST_KEY = st.secrets["KAKAO_REST_KEY"]
     MOLIT_SERVICE_KEY = st.secrets["MOLIT_SERVICE_KEY"]
     KAKAO_JS_KEY = st.secrets["KAKAO_JS_KEY"]
 except Exception as e:
-    st.error("⚠️ Streamlit Secrets에 API 키가 설정되지 않았습니다. Settings -> Secrets를 확인해주세요.")
+    st.error("⚠️ Streamlit Secrets에 API 키가 설정되지 않았습니다.")
     KAKAO_REST_KEY = ""
     MOLIT_SERVICE_KEY = ""
     KAKAO_JS_KEY = ""
@@ -144,7 +168,8 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
 
                         var div = document.createElement('div');
                         div.style.cssText = 'cursor:pointer; padding:6px 10px; background:white; color:#2c3e50; border:2px solid #e74c3c; border-radius:10px; font-weight:bold; font-size:12px; box-shadow:0 2px 6px rgba(0,0,0,0.25); text-align:center; user-select:none;';
-                        div.innerHTML = item.apt_name + '<br><span style="color:#e74c3c; font-size:13px;">평균 ' + item.avg_price_fmt + '만원</span> <span style="font-size:11px; color:#7f8c8d;">(' + item.count + '건)</span>';
+                        /* 억/만 단위 적용된 avg_price_fmt 사용 */
+                        div.innerHTML = item.apt_name + '<br><span style="color:#e74c3c; font-size:13px;">평균 ' + item.avg_price_fmt + '</span> <span style="font-size:11px; color:#7f8c8d;">(' + item.count + '건)</span>';
 
                         div.addEventListener('click', function(e) {
                             e.stopPropagation();
@@ -175,7 +200,7 @@ with open(INDEX_HTML_PATH, "w", encoding="utf-8") as f:
 kakao_map_component = components.declare_component("kakao_map_comp", path=MAP_DIR)
 
 # -----------------------------------------------------------------------------
-# 3. 장소 후보 검색 (동일 주소 중복 제거 적용) 및 실거래가 수집 함수
+# 3. 장소 검색 및 실거래가 수집 함수
 # -----------------------------------------------------------------------------
 def haversine_distance(lat1, lon1, lat2, lon2):
     R = 6371.0
@@ -198,12 +223,10 @@ def get_recent_months(n=3):
     return months
 
 def search_location_candidates(query):
-    """키워드 및 주소 검색을 통해 후보를 반환하며, 동일 주소 내 상가 중복을 제거"""
     headers = {"Authorization": f"KakaoAK {KAKAO_REST_KEY}"}
     candidates = []
     seen_addrs = set()
 
-    # 1. 키워드 검색 (동일 주소 중복 제거)
     try:
         kw_url = f"https://dapi.kakao.com/v2/local/search/keyword.json?query={query}&size=15"
         res = requests.get(kw_url, headers=headers, timeout=5)
@@ -215,7 +238,6 @@ def search_location_candidates(query):
                 addr = road_addr if road_addr else jibun_addr
                 lat, lng = float(doc['y']), float(doc['x'])
                 
-                # 동일 주소 입점 상가 중복 방지: 주소를 식별키로 사용
                 dedup_key = addr if addr else name
                 if dedup_key not in seen_addrs:
                     seen_addrs.add(dedup_key)
@@ -230,7 +252,6 @@ def search_location_candidates(query):
     except Exception:
         pass
 
-    # 2. 주소 검색 (지번/도로명 주소 중복 체크 후 추가)
     try:
         addr_url = f"https://dapi.kakao.com/v2/local/search/address.json?query={query}&size=10"
         res = requests.get(addr_url, headers=headers, timeout=5)
@@ -355,7 +376,7 @@ def fetch_real_estate_for_candidate(lat, lng, full_address, place_name, months_c
     return lat, lng, display_addr, lawd_cd, region_name, df
 
 # -----------------------------------------------------------------------------
-# 4. 중앙 정렬 HTML 표 출력 함수
+# 4. 중앙 정렬 HTML 표 출력 함수 (한글 단위 적용)
 # -----------------------------------------------------------------------------
 def render_custom_centered_table(df):
     if df.empty:
@@ -374,12 +395,13 @@ def render_custom_centered_table(df):
         "</style>",
         "<div class='tbl-container'>",
         "<table class='center-tbl'>",
-        "<thead><tr><th style='width:8%;'>NO</th><th style='width:36%;'>물건명</th><th style='width:16%;'>전용면적(㎡)</th><th style='width:10%;'>층수</th><th style='width:15%;'>매매가(만원)</th><th style='width:15%;'>계약일</th></tr></thead>",
+        "<thead><tr><th style='width:8%;'>NO</th><th style='width:36%;'>물건명</th><th style='width:16%;'>전용면적(㎡)</th><th style='width:10%;'>층수</th><th style='width:15%;'>매매가</th><th style='width:15%;'>계약일</th></tr></thead>",
         "<tbody>"
     ]
 
     for idx, row in df.reset_index(drop=True).iterrows():
-        p_val = f"{int(row['매매가(만원)']):,}" if pd.notnull(row['매매가(만원)']) else "0"
+        # 한글 단위 함수 적용 (예: 20억 5,000만)
+        p_val = format_korean_price(row['매매가(만원)'])
         a_val = f"{float(row['전용면적(㎡)']):.1f}" if pd.notnull(row['전용면적(㎡)']) else "0.0"
         
         html_lines.append(
@@ -402,24 +424,22 @@ if "last_click_ts" not in st.session_state:
     st.session_state["last_click_ts"] = None
 
 # -----------------------------------------------------------------------------
-# 6. 메인 UI 및 사이드바 (st.form 사용)
+# 6. 메인 UI 및 사이드바
 # -----------------------------------------------------------------------------
-st.sidebar.caption("한국자산관리아카데미")
+st.sidebar.caption("🏢 한국자산관리아카데미")
 st.sidebar.title("📍 주소 및 조건")
 
 with st.sidebar.form(key="search_form"):
-    # 1. 주소 및 건물명 입력
     st.markdown("<p style='font-weight: bold; font-size: 16px; margin-bottom: 6px;'>주소 및 건물명</p>", unsafe_allow_html=True)
     search_query_input = st.text_input(
         "검색할 주소 또는 건물명/도로명", 
         value="호수로 688", 
-        label_visibility="collapsed"  # 기본 라벨 숨기고 위 HTML 타이틀 사용
+        label_visibility="collapsed"
     )
     st.caption("ℹ️ 국토교통부 API 특성상 시/군/구 단위로 조회되어 광역 단위 검색은 제한됩니다.")
 
     st.markdown("<div style='margin-top: 16px;'></div>", unsafe_allow_html=True)
 
-    # 2. 조회 기간
     col_lbl1, col_sel1 = st.columns([1, 1])
     with col_lbl1:
         st.markdown("<p style='margin-top: 8px; font-weight: bold; font-size: 16px;'>조회 기간</p>", unsafe_allow_html=True)
@@ -434,14 +454,12 @@ with st.sidebar.form(key="search_form"):
 
     st.markdown("<div style='margin-top: 16px;'></div>", unsafe_allow_html=True)
 
-    # 3. 검색 반경(km) 제한 & 체크박스
     col_lbl2, col_chk2 = st.columns([1, 1])
     with col_lbl2:
         st.markdown("<p style='margin-top: 4px; font-weight: bold; font-size: 16px;'>검색 반경(km) 제한</p>", unsafe_allow_html=True)
     with col_chk2:
         use_radius_limit_input = st.checkbox("<p style='margin-top: 4px; font-weight: bold; font-size: 50px;'>", value=False, label_visibility="collapsed")
         
-    # 바로 아래 슬라이더 배치 (상단 '반경 범위(km)' 텍스트 제거)
     radius_input = st.slider(
         "반경 범위 (km)", 
         min_value=0.5, 
@@ -464,7 +482,6 @@ if "candidates" not in st.session_state:
     st.session_state["submitted_use_radius"] = False
     st.session_state["submitted_radius"] = 1.5
 
-# "위치 검색" 버튼 클릭 시만 실행
 if search_button:
     new_cands = search_location_candidates(search_query_input)
     st.session_state["candidates"] = new_cands
@@ -553,7 +570,8 @@ if selected_candidate:
             for _, r in apt_grp.iterrows():
                 apt_summary_list.append({
                     "apt_name": r['물건명'],
-                    "avg_price_fmt": f"{int(r['평균매매가']):,}",
+                    # 평균가를 억/만 단위로 변환해서 오버레이에 표시
+                    "avg_price_fmt": format_korean_price(r['평균매매가']),
                     "count": int(r['거래건수']),
                     "lat": float(r['lat']),
                     "lng": float(r['lng'])
@@ -609,13 +627,13 @@ if selected_candidate:
 
             if active_apt != "전체 보기":
                 display_df = filtered_df[filtered_df['물건명'] == active_apt].copy()
-                avg_price = int(display_df['매매가(만원)'].mean()) if not display_df.empty else 0
-                st.info(f"🏢 **{active_apt}** ({len(display_df)}건) | 💰 **평균 매매가:** {avg_price:,}만원")
+                avg_price_str = format_korean_price(display_df['매매가(만원)'].mean()) if not display_df.empty else "0만"
+                st.info(f"🏢 **{active_apt}** ({len(display_df)}건) | 💰 **평균 매매가:** {avg_price_str}")
             else:
                 display_df = filtered_df.copy()
                 st.caption("💡 지도의 마커를 클릭하면 해당 단지만 필터링됩니다.")
 
-            # 테이블 출력 (10개 행 표시 가능한 높이 적용)
+            # 한글 단위 표 출력을 위해 render_custom_centered_table 호출
             render_custom_centered_table(display_df)
         else:
             st.info("표시할 상세 데이터가 없습니다.")
