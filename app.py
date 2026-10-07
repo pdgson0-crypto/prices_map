@@ -70,7 +70,7 @@ st.markdown("""
         padding-bottom: 0rem !important;
     }
 
-    /* 3. 로딩 스피너 화면 전체 오버레이 & 중앙 정렬 (화면 밀림 방지) */
+    /* 3. 로딩 스피너 화면 전체 오버레이 & 중앙 컴팩트 모달 박스 */
     div[data-testid="stSpinner"] {
         position: fixed !important;
         top: 0 !important;
@@ -84,9 +84,12 @@ st.markdown("""
         justify-content: center !important;
         align-items: center !important;
     }
-    div[data-testid="stSpinner"] > div {
+    div[data-testid="stSpinner"] > div,
+    div[data-testid="stSpinner"] [role="alert"] {
+        width: auto !important;
+        max-width: fit-content !important;
         background-color: #1f2937 !important;
-        padding: 20px 30px !important;
+        padding: 16px 24px !important;
         border-radius: 12px !important;
         border: 1px solid #374151 !important;
         box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5) !important;
@@ -123,7 +126,7 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
         #map-container {
             position: relative;
             width: 100%;
-            height: 830px; /* 기존 780px에서 50px 확대 */
+            height: 800px;
             border-radius: 12px;
             overflow: hidden;
             border: 1px solid #374151;
@@ -131,7 +134,6 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
 
         #map { width: 100%; height: 100%; }
 
-        /* 네이버 부동산 스타일 우측 슬라이드 드로어 패널 */
         #detail-panel {
             position: absolute;
             top: 0;
@@ -245,7 +247,6 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
     <div id="map-container">
         <div id="map"></div>
 
-        <!-- 우측 슬라이드 드로어 패널 -->
         <div id="detail-panel">
             <div class="panel-header">
                 <div>
@@ -336,7 +337,7 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
         });
 
         sendToStreamlit("streamlit:componentReady", { apiVersion: 1 });
-        sendToStreamlit("streamlit:setFrameHeight", { height: 845 }); /* 지도 높이에 맞춰 845px 설정 */
+        sendToStreamlit("streamlit:setFrameHeight", { height: 815 });
 
         function renderMap(props) {
             var centerLat = props.center_lat;
@@ -373,7 +374,9 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
                         var pos = new kakao.maps.LatLng(item.lat, item.lng);
                         var marker = new kakao.maps.Marker({ position: pos, clickable: true });
 
+                        // 클릭 시 마커 위치로 지도 이동 (panTo)
                         kakao.maps.event.addListener(marker, 'click', function() {
+                            map.panTo(pos);
                             openPanel(item.apt_name);
                         });
 
@@ -381,8 +384,10 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
                         div.className = 'custom-overlay-card';
                         div.innerHTML = item.apt_name + '<br><span style="color:#e74c3c; font-size:13px;">평균 ' + item.avg_price_fmt + '</span> <span style="font-size:11px; color:#7f8c8d;">(' + item.count + '건)</span>';
 
+                        // 클릭 시 커스텀 카드 위치로 지도 이동 (panTo)
                         div.addEventListener('click', function(e) {
                             e.stopPropagation();
+                            map.panTo(pos);
                             openPanel(item.apt_name);
                         });
 
@@ -649,9 +654,9 @@ def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_ty
     lawd_info = get_nearby_lawd_codes(lat, lng, radius_km=2.5)
     
     if not lawd_info:
-        return lat, lng, display_addr, "", "지역 정보 없음", pd.DataFrame()
+        return lat, lng, display_addr, "", [], pd.DataFrame()
 
-    region_names_str = ", ".join(list(set(lawd_info.values())))
+    region_list = sorted(list(set(lawd_info.values())))
     months_list = get_recent_months(months_count)
     
     tasks = [(lawd_cd, ymd, property_type) for lawd_cd in lawd_info.keys() for ymd in months_list]
@@ -665,7 +670,7 @@ def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_ty
                 raw_items.extend(res)
 
     if not raw_items:
-        return lat, lng, display_addr, "", region_names_str, pd.DataFrame()
+        return lat, lng, display_addr, "", region_list, pd.DataFrame()
 
     unique_locations = {}
     for item in raw_items:
@@ -674,7 +679,7 @@ def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_ty
             unique_locations[key] = item
 
     coord_cache = {}
-    main_region_name = list(lawd_info.values())[0] if lawd_info else ""
+    main_region_name = region_list[0] if region_list else ""
 
     with ThreadPoolExecutor(max_workers=20) as executor:
         futures = {
@@ -700,7 +705,7 @@ def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_ty
             valid_trades.append(trade_item)
 
     if not valid_trades:
-        return lat, lng, display_addr, "", region_names_str, pd.DataFrame()
+        return lat, lng, display_addr, "", region_list, pd.DataFrame()
 
     df = pd.DataFrame(valid_trades)
     df = df.rename(columns={
@@ -711,7 +716,7 @@ def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_ty
         "deal_date": "계약일"
     })
     df = df.sort_values(by=['계약일'], ascending=False).reset_index(drop=True)
-    return lat, lng, display_addr, "", region_names_str, df
+    return lat, lng, display_addr, "", region_list, df
 
 # -----------------------------------------------------------------------------
 # 5. 사이드바 UI 및 로직
@@ -794,16 +799,15 @@ else:
     st.sidebar.warning("⚠️ 검색된 위치가 없습니다. 다른 검색어를 입력해 보세요.")
 
 # -----------------------------------------------------------------------------
-# 6. 데이터 조회 (스피너 적용) & 메인 화면 (타이틀 및 지도)
+# 6. 데이터 조회 및 메인 화면 (타이틀 및 지도)
 # -----------------------------------------------------------------------------
 if selected_candidate:
     prop_type = st.session_state.get("submitted_property_type", "아파트")
     months_opt = st.session_state.get("submitted_months", 12)
     period_str = f"최근 {months_opt//12}년"
 
-    # 1. 데이터 수집 시 화면 전체 중앙 덮개 스피너 표시
     with st.spinner("🔄 해당 지역 실거래가 데이터 수집 및 위치 좌표 변환 중입니다..."):
-        lat, lng, full_address, lawd_cd, region_name, filtered_df = fetch_real_estate_ultra_fast(
+        lat, lng, full_address, lawd_cd, region_list, filtered_df = fetch_real_estate_ultra_fast(
             selected_candidate['lat'],
             selected_candidate['lng'],
             selected_candidate['address'],
@@ -812,11 +816,18 @@ if selected_candidate:
             months_opt
         )
 
-    # 2. 로딩 완료 후 사이드바 하단에 초록색 수집 정보 상자 표기
+    if isinstance(region_list, list) and len(region_list) > 0:
+        region_items_html = "".join([f"<li style='margin-bottom: 2px;'>{r}</li>" for r in region_list])
+    else:
+        region_items_html = f"<li>{region_list if region_list else '정보 없음'}</li>"
+
     st.sidebar.markdown(f"""
     <div class="info-banner-sidebar">
         📍 <b>선택 위치:</b> {full_address}<br>
-        🏛️ <b>수집 지역:</b> {region_name}<br>
+        🏛️ <b>수집 지역:</b>
+        <ul style="margin: 4px 0 8px 18px; padding-left: 0; list-style-type: disc;">
+            {region_items_html}
+        </ul>
         📊 <b>{period_str} [{prop_type}]</b> 실거래 총 <b>{len(filtered_df):,}건</b>
     </div>
     """, unsafe_allow_html=True)
@@ -824,24 +835,17 @@ if selected_candidate:
     apt_summary_list = []
     trade_list = []
 
-    # -------------------------------------------------------------------------
-    # 동일 위치(좌표) 단지 통합 처리 로직
-    # -------------------------------------------------------------------------
     if not filtered_df.empty:
-        # 좌표를 소수점 4자리까지 반올림하여 동일한 단지 위치 키(Key) 생성
         filtered_df['coord_key'] = filtered_df.apply(
             lambda r: f"{round(r['lat'], 4)},{round(r['lng'], 4)}", axis=1
         )
 
-        # 같은 위치에서 가장 많이 사용된 아파트 이름을 대표 이름으로 선정
         rep_names = filtered_df.groupby('coord_key')['물건명'].agg(
             lambda x: x.value_counts().index[0]
         ).to_dict()
 
-        # 통합된 대표 이름 적용
         filtered_df['통합물건명'] = filtered_df['coord_key'].map(rep_names)
 
-        # 지도 표기용 요약 데이터 집계 (통합물건명 기준)
         apt_grp = filtered_df.groupby('통합물건명').agg(
             평균매매가=('매매가(만원)', 'mean'),
             거래건수=('매매가(만원)', 'count'),
@@ -858,7 +862,6 @@ if selected_candidate:
                 "lng": float(r['lng'])
             })
 
-        # 우측 슬라이드 패널용 거래 상세 데이터 (통합물건명으로 이름 통일)
         for _, r in filtered_df.iterrows():
             trade_list.append({
                 "apt_name": str(r['통합물건명']),
@@ -869,7 +872,6 @@ if selected_candidate:
                 "deal_date": str(r['계약일'])
             })
 
-    # 3. 메인 화면 헤더 타이틀 및 지도 배치
     st.markdown("<h2 style='font-size: 21px; font-weight: 700; color: #f3f4f6; margin-bottom: 12px; margin-top: 0px;'>🗺️ 부동산 실거래가 시세 지도</h2>", unsafe_allow_html=True)
 
     kakao_map_component(
