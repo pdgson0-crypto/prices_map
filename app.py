@@ -27,6 +27,14 @@ def format_korean_price(price_manwon):
     else:
         return f"{man:,}만"
 
+# XML 안전 태그 추출 함수
+def get_xml_text(item, tags, default=""):
+    for tag in tags:
+        val = item.findtext(tag)
+        if val is not None and val.strip():
+            return val.strip()
+    return default
+
 # -----------------------------------------------------------------------------
 # 1. 페이지 기본 설정 및 CSS
 # -----------------------------------------------------------------------------
@@ -63,7 +71,7 @@ except Exception:
     KAKAO_JS_KEY = ""
 
 # -----------------------------------------------------------------------------
-# 2. 카카오 지도 커스텀 컴포넌트 HTML 생성 (100m급 축척 Level 3 적용)
+# 2. 카카오 지도 커스텀 컴포넌트 HTML 생성 (마우스 호버 zIndex 999 제어 추가)
 # -----------------------------------------------------------------------------
 MAP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "kakao_map_comp"))
 os.makedirs(MAP_DIR, exist_ok=True)
@@ -118,7 +126,7 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
                     });
                 } else {
                     map.setCenter(new kakao.maps.LatLng(centerLat, centerLng));
-                    map.setLevel(3); // 검색 시 확대 레벨을 항상 100m 수준으로 리셋
+                    map.setLevel(3); // 위치 검색 시 축척 항상 100m 수준으로 조절
                 }
 
                 if (clusterer) clusterer.clear();
@@ -143,7 +151,7 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
                         });
 
                         var div = document.createElement('div');
-                        div.style.cssText = 'cursor:pointer; padding:6px 10px; background:white; color:#2c3e50; border:2px solid #e74c3c; border-radius:10px; font-weight:bold; font-size:12px; box-shadow:0 2px 6px rgba(0,0,0,0.25); text-align:center; user-select:none;';
+                        div.style.cssText = 'cursor:pointer; padding:6px 10px; background:white; color:#2c3e50; border:2px solid #e74c3c; border-radius:10px; font-weight:bold; font-size:12px; box-shadow:0 2px 6px rgba(0,0,0,0.25); text-align:center; user-select:none; transition: transform 0.1s;';
                         div.innerHTML = item.apt_name + '<br><span style="color:#e74c3c; font-size:13px;">평균 ' + item.avg_price_fmt + '</span> <span style="font-size:11px; color:#7f8c8d;">(' + item.count + '건)</span>';
 
                         div.addEventListener('click', function(e) {
@@ -152,8 +160,23 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
                         });
 
                         var overlay = new kakao.maps.CustomOverlay({
-                            position: pos, clickable: true, content: div, yAnchor: 2.2
+                            position: pos, 
+                            clickable: true, 
+                            content: div, 
+                            yAnchor: 2.2,
+                            zIndex: 1
                         });
+
+                        // 💡 마우스 호버 시 카드 레이어를 맨 위(zIndex 999)로 올리기
+                        div.addEventListener('mouseenter', function() { 
+                            overlay.setZIndex(999); 
+                            div.style.transform = 'scale(1.05)';
+                        });
+                        div.addEventListener('mouseleave', function() { 
+                            overlay.setZIndex(1); 
+                            div.style.transform = 'scale(1.0)';
+                        });
+
                         overlay.setMap(map);
 
                         markers.push(marker);
@@ -284,7 +307,7 @@ def search_location_candidates(query):
 
     return candidates
 
-# 단일 월/지역 국토부 API 수집 함수
+# 단일 월/지역 국토부 API 수집 함수 (오피스텔, 다세대, 지번 추출 강화)
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_molit_single_task(lawd_cd, ymd, property_type):
     api_url = API_ENDPOINTS.get(property_type, API_ENDPOINTS["아파트"])
@@ -308,40 +331,44 @@ def fetch_molit_single_task(lawd_cd, ymd, property_type):
                     break
                 
                 for item in items:
+                    umd_name = get_xml_text(item, ['umdNm', 'umdName', 'dong'])
+                    jibun_val = get_xml_text(item, ['jibun', 'lnbr'])
+
                     if property_type == "아파트":
-                        apt_name = item.findtext('aptNm', default='아파트').strip()
+                        apt_name = get_xml_text(item, ['aptNm', 'aptName'], default='아파트')
                     elif property_type == "연립/다세대":
-                        apt_name = item.findtext('mhbNm', default='연립다세대').strip()
+                        apt_name = get_xml_text(item, ['mhbNm', 'mhbName', 'rhNm'], default='연립다세대')
                     elif property_type == "오피스텔":
-                        apt_name = item.findtext('offiNm', default='오피스텔').strip()
+                        apt_name = get_xml_text(item, ['offiNm', 'offiName', 'aptNm'], default='오피스텔')
                     elif property_type == "단독/다가구":
-                        apt_name = item.findtext('houseType', default='단독/다가구').strip()
+                        apt_name = get_xml_text(item, ['houseType'], default='단독/다가구')
                     elif property_type == "토지":
-                        apt_name = f"토지({item.findtext('jimok', default='-').strip()})"
+                        jimok = get_xml_text(item, ['jimok'], default='-')
+                        apt_name = f"토지({jimok})"
                     else:
                         apt_name = "부동산"
 
-                    price_str = item.findtext('dealAmount', default='0').replace(',', '').strip()
+                    price_str = get_xml_text(item, ['dealAmount', 'dealAmountManwon'], default='0').replace(',', '').strip()
                     
                     if property_type == "토지":
-                        area_val = item.findtext('plottageArea', default='0')
+                        area_val = get_xml_text(item, ['plottageArea', 'pblntfPrc'])
                     elif property_type == "단독/다가구":
-                        area_val = item.findtext('totalFloorArea', default='0')
+                        area_val = get_xml_text(item, ['totalFloorArea', 'totArea'])
                     else:
-                        area_val = item.findtext('excluUseAr', default='0')
+                        area_val = get_xml_text(item, ['excluUseAr', 'excluArea', 'area'])
                     
-                    area = float(area_val) if area_val else 0.0
-                    umd_name = item.findtext('umdNm', default='').strip()
-                    floor_val = item.findtext('floor', default='').strip()
+                    area = float(area_val) if area_val and area_val != '0' else 0.0
+                    floor_val = get_xml_text(item, ['floor'])
                     
-                    deal_year = item.findtext('dealYear', default='')
-                    deal_month = item.findtext('dealMonth', default='').zfill(2)
-                    deal_day = item.findtext('dealDay', default='').zfill(2)
+                    deal_year = get_xml_text(item, ['dealYear', 'year'])
+                    deal_month = get_xml_text(item, ['dealMonth', 'month']).zfill(2)
+                    deal_day = get_xml_text(item, ['dealDay', 'day']).zfill(2)
                     
                     items_list.append({
                         "apt_name": apt_name,
                         "umd_name": umd_name,
-                        "price": int(price_str),
+                        "jibun": jibun_val,
+                        "price": int(price_str) if price_str.isdigit() else 0,
                         "area": area,
                         "floor": f"{floor_val}층" if floor_val else "-",
                         "deal_date": f"{deal_year}-{deal_month}-{deal_day}"
@@ -357,20 +384,48 @@ def fetch_molit_single_task(lawd_cd, ymd, property_type):
 
     return items_list
 
-# 단일 단지 좌표 변환 함수
+# 단계별 고성능 좌표 변환 함수 (건물명 -> 지번주소 -> 동주소)
 @st.cache_data(ttl=86400, show_spinner=False)
-def get_cached_apt_coord(region_name, apt_name):
+def get_cached_apt_coord(region_name, umd_name, jibun, apt_name):
     headers = {"Authorization": f"KakaoAK {KAKAO_REST_KEY}"}
-    for query_str in [f"{region_name} {apt_name}", apt_name]:
+    
+    search_queries = []
+    
+    # 1. 시군구 + 동 + 지번 + 건물명 검색
+    if umd_name and jibun and apt_name and apt_name not in ["오피스텔", "연립다세대", "단독/다가구", "부동산"] and not apt_name.startswith("토지("):
+        search_queries.append((f"{region_name} {umd_name} {jibun} {apt_name}", "keyword"))
+    
+    # 2. 시군구 + 건물명 검색
+    if region_name and apt_name and apt_name not in ["오피스텔", "연립다세대", "단독/다가구", "부동산"] and not apt_name.startswith("토지("):
+        search_queries.append((f"{region_name} {apt_name}", "keyword"))
+        
+    # 3. 정확한 지번 주소 검색 (건물명이 검색 안 될 때 가장 확실한 방법!)
+    if umd_name and jibun:
+        search_queries.append((f"{region_name} {umd_name} {jibun}", "address"))
+        
+    # 4. 건물명 단독 검색
+    if apt_name and apt_name not in ["오피스텔", "연립다세대", "단독/다가구", "부동산"] and not apt_name.startswith("토지("):
+        search_queries.append((apt_name, "keyword"))
+        
+    # 5. 동 단위 주소 검색 (최후의 보루)
+    if umd_name:
+        search_queries.append((f"{region_name} {umd_name}", "address"))
+
+    for query_str, qtype in search_queries:
         try:
-            geo_url = f"https://dapi.kakao.com/v2/local/search/keyword.json?query={query_str}"
-            geo_res = requests.get(geo_url, headers=headers, timeout=2).json()
-            if geo_res.get('documents'):
-                doc = geo_res['documents'][0]
-                return apt_name, float(doc['y']), float(doc['x'])
+            if qtype == "keyword":
+                url = f"https://dapi.kakao.com/v2/local/search/keyword.json?query={query_str}"
+            else:
+                url = f"https://dapi.kakao.com/v2/local/search/address.json?query={query_str}"
+            
+            res = requests.get(url, headers=headers, timeout=2).json()
+            if res.get('documents'):
+                doc = res['documents'][0]
+                return float(doc['y']), float(doc['x'])
         except Exception:
             pass
-    return apt_name, None, None
+
+    return None, None
 
 # -----------------------------------------------------------------------------
 # 4. 고속 병렬 수집 엔진
@@ -399,22 +454,33 @@ def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_ty
     if not raw_items:
         return lat, lng, display_addr, "", region_names_str, pd.DataFrame()
 
-    unique_apt_names = list(set(item['apt_name'] for item in raw_items))
+    # 위치 수집용 유니크 키 추출
+    unique_locations = {}
+    for item in raw_items:
+        key = (item['umd_name'], item['jibun'], item['apt_name'])
+        if key not in unique_locations:
+            unique_locations[key] = item
+
     coord_cache = {}
+    main_region_name = list(lawd_info.values())[0] if lawd_info else ""
 
     with ThreadPoolExecutor(max_workers=20) as executor:
-        futures = [executor.submit(get_cached_apt_coord, region_names_str, apt) for apt in unique_apt_names]
+        futures = {
+            executor.submit(get_cached_apt_coord, main_region_name, key[0], key[1], key[2]): key 
+            for key in unique_locations.keys()
+        }
         for future in as_completed(futures):
-            apt_name, c_lat, c_lng = future.result()
+            key = futures[future]
+            c_lat, c_lng = future.result()
             if c_lat is not None and c_lng is not None:
                 c_dist = haversine_distance(lat, lng, c_lat, c_lng)
-                coord_cache[apt_name] = (c_lat, c_lng, c_dist)
+                coord_cache[key] = (c_lat, c_lng, c_dist)
 
     valid_trades = []
     for trade in raw_items:
-        apt_name = trade['apt_name']
-        if apt_name in coord_cache:
-            c_lat, c_lng, c_dist = coord_cache[apt_name]
+        key = (trade['umd_name'], trade['jibun'], trade['apt_name'])
+        if key in coord_cache:
+            c_lat, c_lng, c_dist = coord_cache[key]
             trade_item = trade.copy()
             trade_item['lat'] = c_lat
             trade_item['lng'] = c_lng
@@ -519,7 +585,6 @@ with st.sidebar.form(key="search_form"):
 
     st.markdown("<div style='margin-top: 12px;'></div>", unsafe_allow_html=True)
     
-    # [i] 안내 문구 (요청 사항에 따라 1개만 유지)
     st.info("ℹ️ 검색 조건에 따라 데이터를 불러오는 시간이 다소 소요될 수 있습니다.")
 
     search_button = st.form_submit_button("🔍 위치 검색", use_container_width=True)
