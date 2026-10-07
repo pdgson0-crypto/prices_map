@@ -59,10 +59,16 @@ st.markdown("""
         max-width: 500px !important;
     }
 
-    /* 메인 영역 여백 최소화하여 지도가 꽉 차도록 설정 */
+    /* 1. Streamlit 상단 투명 헤더 바 완전 숨김 */
+    header[data-testid="stHeader"] {
+        display: none !important;
+    }
+
+    /* 2. 메인 영역 상단 여백 충분히 확보 (잘림 방지) */
     .block-container {
-        padding-top: 2rem !important;
+        padding-top: 4rem !important;
         padding-bottom: 0rem !important;
+    }
     }
 </style>
 """, unsafe_allow_html=True)
