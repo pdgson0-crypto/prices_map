@@ -63,7 +63,7 @@ except Exception:
     KAKAO_JS_KEY = ""
 
 # -----------------------------------------------------------------------------
-# 2. 카카오 지도 커스텀 컴포넌트 HTML 생성
+# 2. 카카오 지도 커스텀 컴포넌트 HTML 생성 (100m급 축척 Level 3 적용)
 # -----------------------------------------------------------------------------
 MAP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "kakao_map_comp"))
 os.makedirs(MAP_DIR, exist_ok=True)
@@ -114,10 +114,11 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
                 if (!map) {
                     map = new kakao.maps.Map(container, {
                         center: new kakao.maps.LatLng(centerLat, centerLng),
-                        level: 4
+                        level: 3  // 약 100m 반경 확대 레벨
                     });
                 } else {
                     map.setCenter(new kakao.maps.LatLng(centerLat, centerLng));
+                    map.setLevel(3); // 검색 시 확대 레벨을 항상 100m 수준으로 리셋
                 }
 
                 if (clusterer) clusterer.clear();
@@ -372,7 +373,7 @@ def get_cached_apt_coord(region_name, apt_name):
     return apt_name, None, None
 
 # -----------------------------------------------------------------------------
-# 4. 고속 병렬 수집 엔진 (캐싱 적용으로 마커 클릭 시 스피너 노출 방지)
+# 4. 고속 병렬 수집 엔진
 # -----------------------------------------------------------------------------
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_type, months_count):
@@ -385,7 +386,6 @@ def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_ty
     region_names_str = ", ".join(list(set(lawd_info.values())))
     months_list = get_recent_months(months_count)
     
-    # 국토부 API 병렬 수집
     tasks = [(lawd_cd, ymd, property_type) for lawd_cd in lawd_info.keys() for ymd in months_list]
 
     raw_items = []
@@ -399,7 +399,6 @@ def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_ty
     if not raw_items:
         return lat, lng, display_addr, "", region_names_str, pd.DataFrame()
 
-    # 카카오 좌표 변환 병렬 처리
     unique_apt_names = list(set(item['apt_name'] for item in raw_items))
     coord_cache = {}
 
@@ -520,8 +519,7 @@ with st.sidebar.form(key="search_form"):
 
     st.markdown("<div style='margin-top: 12px;'></div>", unsafe_allow_html=True)
     
-    # [i] 안내 문구 2개 추가
-    st.info("ℹ️ 검색 위치 인근 지역의 실거래 데이터를 표시합니다.")
+    # [i] 안내 문구 (요청 사항에 따라 1개만 유지)
     st.info("ℹ️ 검색 조건에 따라 데이터를 불러오는 시간이 다소 소요될 수 있습니다.")
 
     search_button = st.form_submit_button("🔍 위치 검색", use_container_width=True)
