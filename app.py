@@ -71,7 +71,7 @@ except Exception:
     KAKAO_JS_KEY = ""
 
 # -----------------------------------------------------------------------------
-# 2. 카카오 지도 커스텀 컴포넌트 HTML 생성 (마우스 호버 zIndex 999 제어 추가)
+# 2. 카카오 지도 및 네이버 스타일 슬라이드 패널 HTML 생성
 # -----------------------------------------------------------------------------
 MAP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "kakao_map_comp"))
 os.makedirs(MAP_DIR, exist_ok=True)
@@ -83,24 +83,215 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
     <meta charset="utf-8">
     <script type="text/javascript" src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=""" + KAKAO_JS_KEY + """&libraries=clusterer"></script>
     <style>
-        html, body { width: 100%; height: 100%; margin: 0; padding: 0; background: transparent; overflow: hidden; }
-        #map { width: 100%; height: 600px; border-radius: 10px; }
+        html, body { width: 100%; height: 100%; margin: 0; padding: 0; background: transparent; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
+        
+        #map-container {
+            position: relative;
+            width: 100%;
+            height: 740px;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid #374151;
+        }
+
+        #map { width: 100%; height: 100%; }
+
+        /* 💡 네이버 부동산 스타일 우측 슬라이드 드로어 패널 */
+        #detail-panel {
+            position: absolute;
+            top: 0;
+            right: -430px;
+            width: 410px;
+            height: 100%;
+            background: #111827;
+            color: #f3f4f6;
+            box-shadow: -5px 0 25px rgba(0, 0, 0, 0.5);
+            transition: right 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            box-sizing: border-box;
+            border-left: 1px solid #374151;
+        }
+
+        #detail-panel.open {
+            right: 0;
+        }
+
+        .panel-header {
+            padding: 16px;
+            background: #1f2937;
+            border-bottom: 1px solid #374151;
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+        }
+
+        .panel-title {
+            font-size: 17px;
+            font-weight: bold;
+            color: #60a5fa;
+            margin: 0 0 4px 0;
+        }
+
+        .panel-sub {
+            font-size: 13px;
+            color: #9ca3af;
+        }
+
+        .close-btn {
+            background: #374151;
+            border: none;
+            color: #9ca3af;
+            font-size: 14px;
+            border-radius: 50%;
+            width: 28px;
+            height: 28px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s, color 0.2s;
+        }
+        .close-btn:hover { background: #ef4444; color: #ffffff; }
+
+        .panel-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+        }
+
+        .panel-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+            text-align: center;
+        }
+
+        .panel-table th, .panel-table td {
+            padding: 10px 4px;
+            border-bottom: 1px solid #374151;
+        }
+
+        .panel-table th {
+            background: #1f2937;
+            color: #d1d5db;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            font-weight: 600;
+        }
+
+        .panel-table tr:nth-child(even) { background-color: #111827; }
+        .panel-table tr:nth-child(odd) { background-color: #1f2937; }
+        .panel-table tr:hover { background-color: #374151; }
+
+        .custom-overlay-card {
+            cursor: pointer;
+            padding: 6px 10px;
+            background: white;
+            color: #2c3e50;
+            border: 2px solid #e74c3c;
+            border-radius: 10px;
+            font-weight: bold;
+            font-size: 12px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+            text-align: center;
+            user-select: none;
+            transition: transform 0.15s ease, border-color 0.15s ease;
+        }
+        .custom-overlay-card:hover {
+            transform: scale(1.06);
+            border-color: #2563eb;
+        }
     </style>
 </head>
 <body>
-    <div id="map"></div>
+    <div id="map-container">
+        <div id="map"></div>
+
+        <!-- 슬라이드 드로어 패널 -->
+        <div id="detail-panel">
+            <div class="panel-header">
+                <div>
+                    <div id="panel-title" class="panel-title">물건 정보</div>
+                    <div id="panel-sub" class="panel-sub">거래 내역 0건</div>
+                </div>
+                <button class="close-btn" onclick="closePanel()">✕</button>
+            </div>
+            <div class="panel-body">
+                <table class="panel-table">
+                    <thead>
+                        <tr>
+                            <th style="width:12%;">NO</th>
+                            <th style="width:22%;">면적</th>
+                            <th style="width:18%;">층</th>
+                            <th style="width:26%;">매매가</th>
+                            <th style="width:22%;">계약일</th>
+                        </tr>
+                    </thead>
+                    <tbody id="panel-table-body">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
     <script>
         var map, clusterer, markers = [], overlays = [];
+        var allTradeData = [];
 
         function sendToStreamlit(type, data) {
             var msg = Object.assign({ isStreamlitMessage: true, type: type }, data);
             window.parent.postMessage(msg, "*");
         }
 
-        function selectApt(aptName) {
-            sendToStreamlit("streamlit:setComponentValue", { 
-                value: { apt_name: aptName, ts: Date.now() } 
+        function closePanel() {
+            document.getElementById('detail-panel').classList.remove('open');
+        }
+
+        function openPanel(aptName) {
+            var panel = document.getElementById('detail-panel');
+            var title = document.getElementById('panel-title');
+            var sub = document.getElementById('panel-sub');
+            var tbody = document.getElementById('panel-table-body');
+
+            var trades = allTradeData.filter(function(d) { return d.apt_name === aptName; });
+
+            if (trades.length === 0) {
+                closePanel();
+                return;
+            }
+
+            title.innerText = aptName;
+            
+            var sum = trades.reduce(function(acc, cur) { return acc + cur.price_raw; }, 0);
+            var avg = Math.round(sum / trades.length);
+            var avgStr = formatKoreanPriceJS(avg);
+
+            sub.innerHTML = '총 <b style="color:#60a5fa;">' + trades.length + '</b>건 | 평균 <b style="color:#f87171;">' + avgStr + '</b>';
+
+            tbody.innerHTML = '';
+            trades.forEach(function(t, idx) {
+                var tr = document.createElement('tr');
+                tr.innerHTML = '<td>' + (idx + 1) + '</td>' +
+                               '<td>' + t.area + '㎡</td>' +
+                               '<td>' + t.floor + '</td>' +
+                               '<td style="color:#f87171; font-weight:bold;">' + t.price_fmt + '</td>' +
+                               '<td>' + t.deal_date + '</td>';
+                tbody.appendChild(tr);
             });
+
+            panel.classList.add('open');
+        }
+
+        function formatKoreanPriceJS(price) {
+            if (!price || price <= 0) return '0만';
+            var uk = Math.floor(price / 10000);
+            var man = price % 10000;
+            if (uk > 0 && man > 0) return uk.toLocaleString() + '억 ' + man.toLocaleString() + '만';
+            if (uk > 0) return uk.toLocaleString() + '억';
+            return man.toLocaleString() + '만';
         }
 
         window.addEventListener("message", function(event) {
@@ -110,23 +301,25 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
         });
 
         sendToStreamlit("streamlit:componentReady", { apiVersion: 1 });
-        sendToStreamlit("streamlit:setFrameHeight", { height: 625 });
+        sendToStreamlit("streamlit:setFrameHeight", { height: 755 });
 
         function renderMap(props) {
             var centerLat = props.center_lat;
             var centerLng = props.center_lng;
             var aptSummary = props.apt_summary;
+            var selectedApt = props.selected_apt;
+            allTradeData = props.all_trades || [];
 
             kakao.maps.load(function() {
                 var container = document.getElementById('map');
                 if (!map) {
                     map = new kakao.maps.Map(container, {
                         center: new kakao.maps.LatLng(centerLat, centerLng),
-                        level: 3  // 약 100m 반경 확대 레벨
+                        level: 3
                     });
                 } else {
                     map.setCenter(new kakao.maps.LatLng(centerLat, centerLng));
-                    map.setLevel(3); // 위치 검색 시 축척 항상 100m 수준으로 조절
+                    map.setLevel(3);
                 }
 
                 if (clusterer) clusterer.clear();
@@ -147,16 +340,16 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
                         var marker = new kakao.maps.Marker({ position: pos, clickable: true });
 
                         kakao.maps.event.addListener(marker, 'click', function() {
-                            selectApt(item.apt_name);
+                            openPanel(item.apt_name);
                         });
 
                         var div = document.createElement('div');
-                        div.style.cssText = 'cursor:pointer; padding:6px 10px; background:white; color:#2c3e50; border:2px solid #e74c3c; border-radius:10px; font-weight:bold; font-size:12px; box-shadow:0 2px 6px rgba(0,0,0,0.25); text-align:center; user-select:none; transition: transform 0.1s;';
+                        div.className = 'custom-overlay-card';
                         div.innerHTML = item.apt_name + '<br><span style="color:#e74c3c; font-size:13px;">평균 ' + item.avg_price_fmt + '</span> <span style="font-size:11px; color:#7f8c8d;">(' + item.count + '건)</span>';
 
                         div.addEventListener('click', function(e) {
                             e.stopPropagation();
-                            selectApt(item.apt_name);
+                            openPanel(item.apt_name);
                         });
 
                         var overlay = new kakao.maps.CustomOverlay({
@@ -167,15 +360,8 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
                             zIndex: 1
                         });
 
-                        // 💡 마우스 호버 시 카드 레이어를 맨 위(zIndex 999)로 올리기
-                        div.addEventListener('mouseenter', function() { 
-                            overlay.setZIndex(999); 
-                            div.style.transform = 'scale(1.05)';
-                        });
-                        div.addEventListener('mouseleave', function() { 
-                            overlay.setZIndex(1); 
-                            div.style.transform = 'scale(1.0)';
-                        });
+                        div.addEventListener('mouseenter', function() { overlay.setZIndex(999); });
+                        div.addEventListener('mouseleave', function() { overlay.setZIndex(1); });
 
                         overlay.setMap(map);
 
@@ -184,6 +370,12 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
                     });
 
                     clusterer.addMarkers(markers);
+                }
+
+                if (selectedApt && selectedApt !== "전체 보기") {
+                    openPanel(selectedApt);
+                } else {
+                    closePanel();
                 }
             });
         }
@@ -307,7 +499,6 @@ def search_location_candidates(query):
 
     return candidates
 
-# 단일 월/지역 국토부 API 수집 함수 (오피스텔, 다세대, 지번 추출 강화)
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_molit_single_task(lawd_cd, ymd, property_type):
     api_url = API_ENDPOINTS.get(property_type, API_ENDPOINTS["아파트"])
@@ -384,30 +575,23 @@ def fetch_molit_single_task(lawd_cd, ymd, property_type):
 
     return items_list
 
-# 단계별 고성능 좌표 변환 함수 (건물명 -> 지번주소 -> 동주소)
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_cached_apt_coord(region_name, umd_name, jibun, apt_name):
     headers = {"Authorization": f"KakaoAK {KAKAO_REST_KEY}"}
-    
     search_queries = []
     
-    # 1. 시군구 + 동 + 지번 + 건물명 검색
     if umd_name and jibun and apt_name and apt_name not in ["오피스텔", "연립다세대", "단독/다가구", "부동산"] and not apt_name.startswith("토지("):
         search_queries.append((f"{region_name} {umd_name} {jibun} {apt_name}", "keyword"))
     
-    # 2. 시군구 + 건물명 검색
     if region_name and apt_name and apt_name not in ["오피스텔", "연립다세대", "단독/다가구", "부동산"] and not apt_name.startswith("토지("):
         search_queries.append((f"{region_name} {apt_name}", "keyword"))
         
-    # 3. 정확한 지번 주소 검색 (건물명이 검색 안 될 때 가장 확실한 방법!)
     if umd_name and jibun:
         search_queries.append((f"{region_name} {umd_name} {jibun}", "address"))
         
-    # 4. 건물명 단독 검색
     if apt_name and apt_name not in ["오피스텔", "연립다세대", "단독/다가구", "부동산"] and not apt_name.startswith("토지("):
         search_queries.append((apt_name, "keyword"))
         
-    # 5. 동 단위 주소 검색 (최후의 보루)
     if umd_name:
         search_queries.append((f"{region_name} {umd_name}", "address"))
 
@@ -454,7 +638,6 @@ def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_ty
     if not raw_items:
         return lat, lng, display_addr, "", region_names_str, pd.DataFrame()
 
-    # 위치 수집용 유니크 키 추출
     unique_locations = {}
     for item in raw_items:
         key = (item['umd_name'], item['jibun'], item['apt_name'])
@@ -502,51 +685,13 @@ def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_ty
     return lat, lng, display_addr, "", region_names_str, df
 
 # -----------------------------------------------------------------------------
-# 5. 중앙 정렬 HTML 표 출력 함수
-# -----------------------------------------------------------------------------
-def render_custom_centered_table(df):
-    if df.empty:
-        st.info("표시할 상세 데이터가 없습니다.")
-        return
-
-    html_lines = [
-        "<style>",
-        ".tbl-container { max-height: 460px; overflow-y: auto; border: 1px solid #374151; border-radius: 8px; margin-top: 8px; }",
-        ".center-tbl { width: 100%; border-collapse: collapse; font-size: 14px; text-align: center; color: #f3f4f6; }",
-        ".center-tbl th, .center-tbl td { padding: 9px 6px; text-align: center !important; vertical-align: middle !important; border-bottom: 1px solid #374151; }",
-        ".center-tbl th { background-color: #1f2937; color: #ffffff; position: sticky; top: 0; z-index: 10; font-weight: bold; }",
-        ".center-tbl tbody tr:nth-child(even) { background-color: #111827; }",
-        ".center-tbl tbody tr:nth-child(odd) { background-color: #1f2937; }",
-        ".center-tbl tbody tr:hover { background-color: #374151; }",
-        "</style>",
-        "<div class='tbl-container'>",
-        "<table class='center-tbl'>",
-        "<thead><tr><th style='width:8%;'>NO</th><th style='width:36%;'>물건명</th><th style='width:16%;'>면적(㎡)</th><th style='width:10%;'>층수</th><th style='width:15%;'>매매가</th><th style='width:15%;'>계약일</th></tr></thead>",
-        "<tbody>"
-    ]
-
-    for idx, row in df.reset_index(drop=True).iterrows():
-        p_val = format_korean_price(row['매매가(만원)'])
-        a_val = f"{float(row['면적(㎡)']):.1f}" if pd.notnull(row['면적(㎡)']) else "0.0"
-        
-        html_lines.append(
-            f"<tr><td>{idx+1}</td><td>{row['물건명']}</td><td>{a_val}</td><td>{row['층수']}</td><td>{p_val}</td><td>{row['계약일']}</td></tr>"
-        )
-
-    html_lines.append("</tbody></table></div>")
-    st.markdown("\n".join(html_lines), unsafe_allow_html=True)
-
-# -----------------------------------------------------------------------------
-# 6. 세션 상태 초기화 및 UI
+# 5. 세션 상태 초기화 및 사이드바 UI
 # -----------------------------------------------------------------------------
 def reset_filter_callback():
     st.session_state["select_apt_dropdown"] = "전체 보기"
 
 if "select_apt_dropdown" not in st.session_state:
     st.session_state["select_apt_dropdown"] = "전체 보기"
-
-if "last_click_ts" not in st.session_state:
-    st.session_state["last_click_ts"] = None
 
 st.sidebar.markdown(
     "<h3 style='font-size: 20px; font-weight: bold; margin-bottom: 0px;'>🏢 한국자산관리아카데미</h3>", 
@@ -584,7 +729,6 @@ with st.sidebar.form(key="search_form"):
     )
 
     st.markdown("<div style='margin-top: 12px;'></div>", unsafe_allow_html=True)
-    
     st.info("ℹ️ 검색 조건에 따라 데이터를 불러오는 시간이 다소 소요될 수 있습니다.")
 
     search_button = st.form_submit_button("🔍 위치 검색", use_container_width=True)
@@ -601,7 +745,6 @@ if search_button:
     st.session_state["candidates"] = new_cands
     st.session_state["selected_candidate_idx"] = 0
     st.session_state["select_apt_dropdown"] = "전체 보기"
-    st.session_state["last_click_ts"] = None
     st.session_state["submitted_property_type"] = property_type_input
     st.session_state["submitted_months"] = months_count_input
 
@@ -628,7 +771,7 @@ else:
     st.sidebar.warning("⚠️ 검색된 위치가 없습니다. 다른 검색어를 입력해 보세요.")
 
 # -----------------------------------------------------------------------------
-# 7. 메인 지도 및 결과 출력
+# 6. 메인 화면 (네이버 부동산 스타일 지도 + 우측 슬라이드 드로어)
 # -----------------------------------------------------------------------------
 if selected_candidate:
     prop_type = st.session_state.get("submitted_property_type", "아파트")
@@ -658,99 +801,73 @@ if selected_candidate:
     </div>
     """, unsafe_allow_html=True)
 
-    col_map, col_detail = st.columns([1, 1], gap="medium")
-
-    with col_map:
+    # 💡 상단 슬림 컨트롤 바 (물건 드롭다운 선택 및 필터 해제)
+    col_title, col_sel, col_btn = st.columns([2, 2, 1], vertical_alignment="center")
+    
+    with col_title:
         st.subheader("🗺️ 부동산 실거래 지도")
 
-        map_center_lat, map_center_lng = lat, lng
-        current_selected = st.session_state["select_apt_dropdown"]
-        if current_selected != "전체 보기" and not filtered_df.empty:
-            match_row = filtered_df[filtered_df['물건명'] == current_selected]
-            if not match_row.empty:
-                map_center_lat = match_row['lat'].iloc[0]
-                map_center_lng = match_row['lng'].iloc[0]
-
-        apt_summary_list = []
-        if not filtered_df.empty:
-            apt_grp = filtered_df.groupby('물건명').agg(
-                평균매매가=('매매가(만원)', 'mean'),
-                거래건수=('매매가(만원)', 'count'),
-                lat=('lat', 'first'),
-                lng=('lng', 'first')
-            ).reset_index()
-
-            for _, r in apt_grp.iterrows():
-                apt_summary_list.append({
-                    "apt_name": r['물건명'],
-                    "avg_price_fmt": format_korean_price(r['평균매매가']),
-                    "count": int(r['거래건수']),
-                    "lat": float(r['lat']),
-                    "lng": float(r['lng'])
-                })
-
-        clicked_data = kakao_map_component(
-            key="kakao_map_comp",
-            center_lat=map_center_lat,
-            center_lng=map_center_lng,
-            apt_summary=apt_summary_list
+    with col_sel:
+        st.selectbox(
+            "물건 선택",
+            apt_options,
+            key="select_apt_dropdown",
+            label_visibility="collapsed"
         )
 
-        if isinstance(clicked_data, dict):
-            clicked_apt = clicked_data.get("apt_name")
-            click_ts = clicked_data.get("ts")
-            
-            if click_ts and click_ts != st.session_state.get("last_click_ts"):
-                st.session_state["last_click_ts"] = click_ts
-                st.session_state["select_apt_dropdown"] = clicked_apt
-                st.rerun()
+    with col_btn:
+        st.button(
+            "🎛️ 필터해제", 
+            use_container_width=True, 
+            on_click=reset_filter_callback
+        )
 
-with col_detail:
-        st.subheader("📊 물건 상세 내용")
+    # 중심 좌표 및 데이터 바인딩
+    map_center_lat, map_center_lng = lat, lng
+    current_selected = st.session_state["select_apt_dropdown"]
+    
+    if current_selected != "전체 보기" and not filtered_df.empty:
+        match_row = filtered_df[filtered_df['물건명'] == current_selected]
+        if not match_row.empty:
+            map_center_lat = match_row['lat'].iloc[0]
+            map_center_lng = match_row['lng'].iloc[0]
 
-        if not filtered_df.empty:
-            st.markdown("<p style='font-weight: bold; margin-bottom: 5px; font-size: 15px;'>🔍 상세 검색 필터</p>", unsafe_allow_html=True)
-            
-            col_sel, col_btn = st.columns([4, 1])
-            
-            with col_sel:
-                st.selectbox(
-                    "물건 선택",
-                    apt_options,
-                    key="select_apt_dropdown",
-                    label_visibility="collapsed"
-                )
+    apt_summary_list = []
+    trade_list = []
 
-            with col_btn:
-                st.button(
-                    "🎛️ 필터해제", 
-                    use_container_width=True, 
-                    on_click=reset_filter_callback
-                )
+    if not filtered_df.empty:
+        apt_grp = filtered_df.groupby('물건명').agg(
+            평균매매가=('매매가(만원)', 'mean'),
+            거래건수=('매매가(만원)', 'count'),
+            lat=('lat', 'first'),
+            lng=('lng', 'first')
+        ).reset_index()
 
-            active_apt = st.session_state["select_apt_dropdown"]
+        for _, r in apt_grp.iterrows():
+            apt_summary_list.append({
+                "apt_name": str(r['물건명']),
+                "avg_price_fmt": format_korean_price(r['평균매매가']),
+                "count": int(r['거래건수']),
+                "lat": float(r['lat']),
+                "lng": float(r['lng'])
+            })
 
-            # 💡 높이가 고정된 슬림한 안내 바 (필터 선택 여부와 무관하게 레이아웃 유지)
-            if active_apt != "전체 보기":
-                display_df = filtered_df[filtered_df['물건명'] == active_apt].copy()
-                avg_price_str = format_korean_price(display_df['매매가(만원)'].mean()) if not display_df.empty else "0만"
-                
-                info_html = f"""
-                <div style="height:36px; line-height:36px; background-color:#1e293b; border:1px solid #3b82f6; border-radius:6px; padding:0 12px; font-size:13px; color:#60a5fa; margin-top:6px; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
-                    <span>🏢 <b>{active_apt}</b> ({len(display_df)}건)</span>
-                    <span>💰 <b>평균 매매가:</b> <span style="color:#f87171; font-weight:bold;">{avg_price_str}</span></span>
-                </div>
-                """
-                st.markdown(info_html, unsafe_allow_html=True)
-            else:
-                display_df = filtered_df.copy()
-                info_html = """
-                <div style="height:36px; line-height:36px; background-color:#1e293b; border:1px solid #475569; border-radius:6px; padding:0 12px; font-size:13px; color:#94a3b8; margin-top:6px; margin-bottom:6px;">
-                    💡 지도의 마커를 클릭하면 해당 물건만 필터링됩니다.
-                </div>
-                """
-                st.markdown(info_html, unsafe_allow_html=True)
+        for _, r in filtered_df.iterrows():
+            trade_list.append({
+                "apt_name": str(r['물건명']),
+                "area": f"{float(r['면적(㎡)']):.1f}" if pd.notnull(r['면적(㎡)']) else "0.0",
+                "floor": str(r['층수']),
+                "price_raw": int(r['매매가(만원)']),
+                "price_fmt": format_korean_price(r['매매가(만원)']),
+                "deal_date": str(r['계약일'])
+            })
 
-            render_custom_centered_table(display_df)
-        else:
-            st.info(f"해당 지역 및 조회 기간 내 [{prop_type}] 실거래가 데이터가 없습니다.")
+    # 전체 화면 카카오 지도 컴포넌트 호출
+    kakao_map_component(
+        key="kakao_map_comp",
+        center_lat=map_center_lat,
+        center_lng=map_center_lng,
+        apt_summary=apt_summary_list,
+        all_trades=trade_list,
+        selected_apt=current_selected
+    )
