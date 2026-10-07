@@ -49,12 +49,6 @@ st.markdown("""
         min-width: 350px !important;
         max-width: 500px !important;
     }
-
-    div[data-testid="stCheckbox"] {
-        transform: scale(1.6) !important;
-        transform-origin: left center !important;
-        margin-top: 4px !important;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -88,7 +82,7 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
 <body>
     <div id="map"></div>
     <script>
-        var map, clusterer, markers = [], overlays = [], circle;
+        var map, clusterer, markers = [], overlays = [];
 
         function sendToStreamlit(type, data) {
             var msg = Object.assign({ isStreamlitMessage: true, type: type }, data);
@@ -114,7 +108,6 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
             var centerLat = props.center_lat;
             var centerLng = props.center_lng;
             var aptSummary = props.apt_summary;
-            var radiusInfo = props.radius_info;
 
             kakao.maps.load(function() {
                 var container = document.getElementById('map');
@@ -132,23 +125,12 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
                 markers = [];
                 overlays.forEach(function(o) { o.setMap(null); });
                 overlays = [];
-                if (circle) { circle.setMap(null); circle = null; }
 
                 clusterer = new kakao.maps.MarkerClusterer({
                     map: map,
                     averageCenter: true,
                     minLevel: 5
                 });
-
-                if (radiusInfo && radiusInfo.use) {
-                    circle = new kakao.maps.Circle({
-                        center: new kakao.maps.LatLng(radiusInfo.lat, radiusInfo.lng),
-                        radius: radiusInfo.radius * 1000,
-                        strokeWeight: 2, strokeColor: '#FF0000', strokeOpacity: 0.8,
-                        strokeStyle: 'solid', fillColor: '#FF0000', fillOpacity: 0.12
-                    });
-                    circle.setMap(map);
-                }
 
                 if (aptSummary && aptSummary.length > 0) {
                     aptSummary.forEach(function(item) {
@@ -192,7 +174,7 @@ with open(INDEX_HTML_PATH, "w", encoding="utf-8") as f:
 kakao_map_component = components.declare_component("kakao_map_comp", path=MAP_DIR)
 
 # -----------------------------------------------------------------------------
-# 3. 고속 수집 엔진 (멀티쓰레딩 병렬 처리 적용)
+# 3. 데이터 처리 및 API 함수
 # -----------------------------------------------------------------------------
 API_ENDPOINTS = {
     "아파트": "http://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev",
@@ -222,7 +204,7 @@ def get_recent_months(n=12):
         months.append(f"{year:04d}{month:02d}")
     return months
 
-def get_nearby_lawd_codes(lat, lng, radius_km=2.0):
+def get_nearby_lawd_codes(lat, lng, radius_km=2.5):
     headers = {"Authorization": f"KakaoAK {KAKAO_REST_KEY}"}
     lawd_info = {}
     
@@ -390,12 +372,12 @@ def get_cached_apt_coord(region_name, apt_name):
     return apt_name, None, None
 
 # -----------------------------------------------------------------------------
-# 4. 병렬 처리 기반 메인 수집 함수 (속도 핵심)
+# 4. 고속 병렬 수집 엔진 (캐싱 적용으로 마커 클릭 시 스피너 노출 방지)
 # -----------------------------------------------------------------------------
-def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_type, months_count, use_radius_limit, radius):
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_type, months_count):
     display_addr = full_address if full_address else place_name
-    search_radius = radius if use_radius_limit else 2.5
-    lawd_info = get_nearby_lawd_codes(lat, lng, radius_km=search_radius)
+    lawd_info = get_nearby_lawd_codes(lat, lng, radius_km=2.5)
     
     if not lawd_info:
         return lat, lng, display_addr, "", "지역 정보 없음", pd.DataFrame()
@@ -403,11 +385,8 @@ def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_ty
     region_names_str = ", ".join(list(set(lawd_info.values())))
     months_list = get_recent_months(months_count)
     
-    # [핵심 1] 국토부 API 병렬 수집 (최대 16개 쓰레드)
-    tasks = []
-    for lawd_cd in lawd_info.keys():
-        for ymd in months_list:
-            tasks.append((lawd_cd, ymd, property_type))
+    # 국토부 API 병렬 수집
+    tasks = [(lawd_cd, ymd, property_type) for lawd_cd in lawd_info.keys() for ymd in months_list]
 
     raw_items = []
     with ThreadPoolExecutor(max_workers=16) as executor:
@@ -420,7 +399,7 @@ def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_ty
     if not raw_items:
         return lat, lng, display_addr, "", region_names_str, pd.DataFrame()
 
-    # [핵심 2] 단지 좌표 카카오 API 병렬 변환 (최대 20개 쓰레드)
+    # 카카오 좌표 변환 병렬 처리
     unique_apt_names = list(set(item['apt_name'] for item in raw_items))
     coord_cache = {}
 
@@ -432,20 +411,16 @@ def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_ty
                 c_dist = haversine_distance(lat, lng, c_lat, c_lng)
                 coord_cache[apt_name] = (c_lat, c_lng, c_dist)
 
-    # 거리 필터링 및 DataFrame 구성
     valid_trades = []
-    rad_limit = radius if use_radius_limit else 999.0
-
     for trade in raw_items:
         apt_name = trade['apt_name']
         if apt_name in coord_cache:
             c_lat, c_lng, c_dist = coord_cache[apt_name]
-            if not use_radius_limit or c_dist <= rad_limit:
-                trade_item = trade.copy()
-                trade_item['lat'] = c_lat
-                trade_item['lng'] = c_lng
-                trade_item['거리(km)'] = c_dist
-                valid_trades.append(trade_item)
+            trade_item = trade.copy()
+            trade_item['lat'] = c_lat
+            trade_item['lng'] = c_lng
+            trade_item['거리(km)'] = c_dist
+            valid_trades.append(trade_item)
 
     if not valid_trades:
         return lat, lng, display_addr, "", region_names_str, pd.DataFrame()
@@ -534,36 +509,19 @@ with st.sidebar.form(key="search_form"):
 
     st.markdown("<div style='margin-top: 12px;'></div>", unsafe_allow_html=True)
 
-    col_lbl1, col_sel1 = st.columns([1, 1])
-    with col_lbl1:
-        st.markdown("<p style='margin-top: 8px; font-weight: bold; font-size: 16px;'>조회 기간</p>", unsafe_allow_html=True)
-    with col_sel1:
-        months_count_input = st.selectbox(
-            "조회 기간",
-            options=[1, 3, 6, 12],
-            index=3,
-            format_func=lambda x: f"최근 {x}개월",
-            label_visibility="collapsed"
-        )
-
-    st.markdown("<div style='margin-top: 12px;'></div>", unsafe_allow_html=True)
-
-    col_lbl2, col_chk2 = st.columns([1, 1])
-    with col_lbl2:
-        st.markdown("<p style='margin-top: 4px; font-weight: bold; font-size: 16px;'>검색 반경(km) 제한</p>", unsafe_allow_html=True)
-    with col_chk2:
-        use_radius_limit_input = st.checkbox("<p style='margin-top: 4px; font-weight: bold; font-size: 50px;'>", value=False, label_visibility="collapsed")
-        
-    radius_input = st.slider(
-        "반경 범위 (km)", 
-        min_value=0.5, 
-        max_value=5.0, 
-        value=1.5, 
-        step=0.1,
+    st.markdown("<p style='font-weight: bold; font-size: 16px; margin-bottom: 6px;'>조회 기간 (1년 이상)</p>", unsafe_allow_html=True)
+    months_count_input = st.selectbox(
+        "조회 기간 선택",
+        options=[12, 24, 36],
+        index=0,
+        format_func=lambda x: f"최근 {x//12}년",
         label_visibility="collapsed"
     )
+
+    st.markdown("<div style='margin-top: 12px;'></div>", unsafe_allow_html=True)
     
-    st.markdown("<div style='margin-top: 10px;'></div>", unsafe_allow_html=True)
+    # [i] 설명 박스 추가
+    st.info("ℹ️ 검색 위치를 중심으로 인근 지역의 실거래 데이터를 자동으로 분석하여 지도에 표시합니다.")
 
     search_button = st.form_submit_button("🔍 위치 검색", use_container_width=True)
 
@@ -573,8 +531,6 @@ if "candidates" not in st.session_state:
     st.session_state["selected_candidate_idx"] = 0
     st.session_state["submitted_property_type"] = "아파트"
     st.session_state["submitted_months"] = 12
-    st.session_state["submitted_use_radius"] = False
-    st.session_state["submitted_radius"] = 1.5
 
 if search_button:
     new_cands = search_location_candidates(search_query_input)
@@ -584,8 +540,6 @@ if search_button:
     st.session_state["last_click_ts"] = None
     st.session_state["submitted_property_type"] = property_type_input
     st.session_state["submitted_months"] = months_count_input
-    st.session_state["submitted_use_radius"] = use_radius_limit_input
-    st.session_state["submitted_radius"] = radius_input
 
 candidates = st.session_state.get("candidates", [])
 selected_candidate = None
@@ -615,22 +569,16 @@ else:
 if selected_candidate:
     prop_type = st.session_state.get("submitted_property_type", "아파트")
     months_opt = st.session_state.get("submitted_months", 12)
-    period_str = f"최근 {months_opt}개월" if months_opt < 12 else "최근 1년"
+    period_str = f"최근 {months_opt//12}년"
 
-    display_address_str = selected_candidate['address'] if selected_candidate['address'] else selected_candidate['place_name']
-    spinner_message = f"⏳ [{display_address_str}]의 {period_str} [{prop_type}] 거래 정보를 수집 중입니다..."
-
-    with st.spinner(spinner_message):
-        lat, lng, full_address, lawd_cd, region_name, filtered_df = fetch_real_estate_ultra_fast(
-            selected_candidate['lat'],
-            selected_candidate['lng'],
-            selected_candidate['address'],
-            selected_candidate['place_name'],
-            prop_type,
-            months_opt,
-            st.session_state.get("submitted_use_radius", False),
-            st.session_state.get("submitted_radius", 1.5)
-        )
+    lat, lng, full_address, lawd_cd, region_name, filtered_df = fetch_real_estate_ultra_fast(
+        selected_candidate['lat'],
+        selected_candidate['lng'],
+        selected_candidate['address'],
+        selected_candidate['place_name'],
+        prop_type,
+        months_opt
+    )
 
     apt_options = ["전체 보기"]
     if not filtered_df.empty:
@@ -681,13 +629,7 @@ if selected_candidate:
             key="kakao_map_comp",
             center_lat=map_center_lat,
             center_lng=map_center_lng,
-            apt_summary=apt_summary_list,
-            radius_info={
-                "use": st.session_state.get("submitted_use_radius", False),
-                "radius": st.session_state.get("submitted_radius", 1.5),
-                "lat": lat,
-                "lng": lng
-            }
+            apt_summary=apt_summary_list
         )
 
         if isinstance(clicked_data, dict):
