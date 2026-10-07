@@ -511,7 +511,7 @@ def render_custom_centered_table(df):
 
     html_lines = [
         "<style>",
-        ".tbl-container { max-height: 470px; overflow-y: auto; border: 1px solid #374151; border-radius: 8px; margin-top: 8px; }",
+        ".tbl-container { max-height: 460px; overflow-y: auto; border: 1px solid #374151; border-radius: 8px; margin-top: 8px; }",
         ".center-tbl { width: 100%; border-collapse: collapse; font-size: 14px; text-align: center; color: #f3f4f6; }",
         ".center-tbl th, .center-tbl td { padding: 9px 6px; text-align: center !important; vertical-align: middle !important; border-bottom: 1px solid #374151; }",
         ".center-tbl th { background-color: #1f2937; color: #ffffff; position: sticky; top: 0; z-index: 10; font-weight: bold; }",
