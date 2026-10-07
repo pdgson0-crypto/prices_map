@@ -761,7 +761,7 @@ with st.sidebar.form(key="search_form"):
     search_button = st.form_submit_button("🔍 위치 검색", use_container_width=True)
 
 if "candidates" not in st.session_state:
-    with st.spinner("🔍 위치를 검색하고 있습니다..."):
+    with st.spinner("위치를 검색하고 있습니다..."):
         initial_cands = search_location_candidates("호수로 688")
     st.session_state["candidates"] = initial_cands
     st.session_state["selected_candidate_idx"] = 0
@@ -769,7 +769,7 @@ if "candidates" not in st.session_state:
     st.session_state["submitted_months"] = 12
 
 if search_button:
-    with st.spinner("🔍 위치를 검색하고 있습니다..."):
+    with st.spinner("위치를 검색하고 있습니다..."):
         new_cands = search_location_candidates(search_query_input)
     st.session_state["candidates"] = new_cands
     st.session_state["selected_candidate_idx"] = 0
@@ -806,7 +806,7 @@ if selected_candidate:
     months_opt = st.session_state.get("submitted_months", 12)
     period_str = f"최근 {months_opt//12}년"
 
-    with st.spinner("해당 지역 실거래가 데이터 수집 및 위치 좌표 변환 중입니다..."):
+    with st.spinner("🔄 해당 지역 실거래가 데이터 수집 및 위치 좌표 변환 중입니다.\n위치/유형 등에 따라 시간이 다소 소요될 수 있습니다..."):
         lat, lng, full_address, lawd_cd, region_list, filtered_df = fetch_real_estate_ultra_fast(
             selected_candidate['lat'],
             selected_candidate['lng'],
