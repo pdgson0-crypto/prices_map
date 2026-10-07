@@ -392,18 +392,13 @@ def fetch_real_estate_for_candidate(lat, lng, full_address, place_name, property
     valid_trades = []
     rad_limit = radius if use_radius_limit else 999.0
 
-    for trade in raw_items:
-    coord_cache = {}
-    valid_trades = []
-    rad_limit = radius if use_radius_limit else 999.0
-
     # 📌 1단계: 전체 거래 중 '물건명(아파트명)'별로 대표 좌표를 딱 한 번씩만 구함 (속도 대폭 향상의 핵심!)
     unique_apt_names = set(item['apt_name'] for item in raw_items)
     
     for apt_name in unique_apt_names:
         c_lat, c_lng = None, None
         # 법정동명 조합 또는 아파트 이름으로 카카오 좌표 검색
-        for query_str in [f"{list(lawd_info.values())[0]} {apt_name}", apt_name]:
+        for query_str in [f"{region_names_str} {apt_name}", apt_name]:
             try:
                 geo_url = f"https://dapi.kakao.com/v2/local/search/keyword.json?query={query_str}"
                 geo_res = requests.get(geo_url, headers=headers, timeout=2).json()
