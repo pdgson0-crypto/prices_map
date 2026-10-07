@@ -40,8 +40,16 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-KAKAO_REST_KEY = "66aff19c67a0318a8e9448a731dced70"
-MOLIT_SERVICE_KEY = "6888276da6db9affaee262e75c49b56f97774a3868e029696a73d8103f6727ad"
+# Streamlit Secrets에서 API 키 안전하게 로드
+try:
+    KAKAO_REST_KEY = st.secrets["KAKAO_REST_KEY"]
+    MOLIT_SERVICE_KEY = st.secrets["MOLIT_SERVICE_KEY"]
+    KAKAO_JS_KEY = st.secrets["KAKAO_JS_KEY"]
+except Exception as e:
+    st.error("⚠️ Streamlit Secrets에 API 키가 설정되지 않았습니다. Settings -> Secrets를 확인해주세요.")
+    KAKAO_REST_KEY = ""
+    MOLIT_SERVICE_KEY = ""
+    KAKAO_JS_KEY = ""
 
 # -----------------------------------------------------------------------------
 # 2. 카카오 지도 커스텀 컴포넌트 HTML 생성
@@ -54,7 +62,7 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
-    <script type="text/javascript" src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=2281dfdf4a51c863369f1ce41d557b2e&libraries=clusterer"></script>
+    <script type="text/javascript" src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=""" + KAKAO_JS_KEY + """&libraries=clusterer"></script>
     <style>
         html, body { width: 100%; height: 100%; margin: 0; padding: 0; background: transparent; overflow: hidden; }
         #map { width: 100%; height: 600px; border-radius: 10px; }
