@@ -511,7 +511,7 @@ def render_custom_centered_table(df):
 
     html_lines = [
         "<style>",
-        ".tbl-container { max-height: 470px; overflow-y: auto; border: 1px solid #374151; border-radius: 8px; margin-top: 8px; }",
+        ".tbl-container { max-height: 415px; overflow-y: auto; border: 1px solid #374151; border-radius: 8px; margin-top: 8px; }",
         ".center-tbl { width: 100%; border-collapse: collapse; font-size: 14px; text-align: center; color: #f3f4f6; }",
         ".center-tbl th, .center-tbl td { padding: 9px 6px; text-align: center !important; vertical-align: middle !important; border-bottom: 1px solid #374151; }",
         ".center-tbl th { background-color: #1f2937; color: #ffffff; position: sticky; top: 0; z-index: 10; font-weight: bold; }",
@@ -705,7 +705,7 @@ if selected_candidate:
                 st.session_state["select_apt_dropdown"] = clicked_apt
                 st.rerun()
 
-    with col_detail:
+with col_detail:
         st.subheader("📊 물건 상세 내용")
 
         if not filtered_df.empty:
@@ -730,13 +730,26 @@ if selected_candidate:
 
             active_apt = st.session_state["select_apt_dropdown"]
 
+            # 💡 높이가 고정된 슬림한 안내 바 (필터 선택 여부와 무관하게 레이아웃 유지)
             if active_apt != "전체 보기":
                 display_df = filtered_df[filtered_df['물건명'] == active_apt].copy()
                 avg_price_str = format_korean_price(display_df['매매가(만원)'].mean()) if not display_df.empty else "0만"
-                st.info(f"🏢 **{active_apt}** ({len(display_df)}건) | 💰 **평균 매매가:** {avg_price_str}")
+                
+                info_html = f"""
+                <div style="height:36px; line-height:36px; background-color:#1e293b; border:1px solid #3b82f6; border-radius:6px; padding:0 12px; font-size:13px; color:#60a5fa; margin-top:6px; margin-bottom:6px; display:flex; justify-content:space-between; align-items:center;">
+                    <span>🏢 <b>{active_apt}</b> ({len(display_df)}건)</span>
+                    <span>💰 <b>평균 매매가:</b> <span style="color:#f87171; font-weight:bold;">{avg_price_str}</span></span>
+                </div>
+                """
+                st.markdown(info_html, unsafe_allow_html=True)
             else:
                 display_df = filtered_df.copy()
-                st.caption("💡 지도의 마커를 클릭하면 해당 물건만 필터링됩니다.")
+                info_html = """
+                <div style="height:36px; line-height:36px; background-color:#1e293b; border:1px solid #475569; border-radius:6px; padding:0 12px; font-size:13px; color:#94a3b8; margin-top:6px; margin-bottom:6px;">
+                    💡 지도의 마커를 클릭하면 해당 물건만 필터링됩니다.
+                </div>
+                """
+                st.markdown(info_html, unsafe_allow_html=True)
 
             render_custom_centered_table(display_df)
         else:
