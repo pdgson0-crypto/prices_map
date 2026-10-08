@@ -39,20 +39,11 @@ def get_recent_months(n=12):
     return months
 
 def format_region_display(region_list):
-    cleaned = []
-    for r in region_list:
-        parts = r.split()
-        if len(parts) >= 3:
-            cleaned.append(parts[-1])
-        elif len(parts) == 2:
-            cleaned.append(parts[-1])
-        else:
-            cleaned.append(r)
-    return list(dict.fromkeys(cleaned))
+    return list(dict.fromkeys(region_list))
 
 st.set_page_config(page_title="부동산 실거래가 지도", layout="wide")
 
-# 반응형 지도 및 사이드바 배너 스타일 정의
+# 적응형(반응형) 반응 지도 및 사이드바 스타일 정의
 st.markdown("""
 <style>
     .info-banner-sidebar { 
@@ -67,12 +58,15 @@ st.markdown("""
     }
     [data-testid="stSidebar"] { min-width: 340px !important; max-width: 450px !important; }
     [data-testid="stSidebarCollapseButton"], [data-testid="collapsedControl"], header[data-testid="stHeader"] { display: none !important; }
-    .block-container { padding-top: 0.5rem !important; padding-bottom: 0 !important; padding-left: 0.5rem !important; padding-right: 0.5rem !important; }
+    .block-container { padding-top: 0.5rem !important; padding-bottom: 0 !important; padding-left: 0.5rem !important; padding-right: 0.5rem !important; max-width: 100% !important; }
     
-    /* 적응형 지도 프레임 설정 */
+    /* 브라우저 화면 높이에 맞게 지도 높이 자동 적응 */
+    div[data-testid="stCustomComponentV1"],
+    div[data-testid="stCustomComponentV1"] > iframe,
     iframe[title="kakao_map_comp.kakao_map_comp"] {
-        height: calc(100vh - 2rem) !important;
-        min-height: 550px;
+        height: calc(100vh - 1.5rem) !important;
+        min-height: 650px !important;
+        width: 100% !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -85,7 +79,7 @@ except Exception:
     st.error("⚠️ Streamlit Secrets 키를 설정해주세요.")
 
 # -----------------------------------------------------------------------------
-# 1. 카카오 지도 컴포넌트 (적응형 높이 지원)
+# 1. 카카오 지도 컴포넌트 (완전 적응형 높이 지원)
 # -----------------------------------------------------------------------------
 MAP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "kakao_map_comp"))
 os.makedirs(MAP_DIR, exist_ok=True)
@@ -97,12 +91,12 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
     <meta charset="utf-8">
     <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={KAKAO_JS_KEY}&libraries=clusterer"></script>
     <style>
-        html, body {{ width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; font-family: sans-serif; }}
+        html, body {{ width: 100%; height: 100vh; margin: 0; padding: 0; overflow: hidden; font-family: sans-serif; }}
         #map-container {{ 
             position: relative; 
             width: 100%; 
-            height: calc(100vh - 15px); 
-            min-height: 550px;
+            height: 100vh; 
+            min-height: 650px;
             border-radius: 12px; 
             overflow: hidden; 
             border: 1px solid #374151; 
@@ -186,8 +180,17 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
         }}
 
         function notifyHeight() {{
-            var h = window.innerHeight ? window.innerHeight - 10 : 850;
-            sendMsg("streamlit:setFrameHeight", {{ height: Math.max(h, 550) }});
+            var h = 850;
+            try {{
+                if (window.top && window.top.innerHeight) {{
+                    h = window.top.innerHeight - 30;
+                }} else if (window.parent && window.parent.innerHeight) {{
+                    h = window.parent.innerHeight - 30;
+                }}
+            }} catch(e) {{
+                h = Math.max(window.innerHeight, 850);
+            }}
+            sendMsg("streamlit:setFrameHeight", {{ height: Math.max(h, 650) }});
             if (map) map.relayout();
         }}
 
@@ -305,7 +308,7 @@ with open(INDEX_HTML_PATH, "w", encoding="utf-8") as f:
 kakao_map_component = components.declare_component("kakao_map_comp", path=MAP_DIR)
 
 # -----------------------------------------------------------------------------
-# 2. 데이터 수집 및 좌표 변환
+# 2. 데이터 수집 및 좌표 변환 (구 단위 수집 정보 적용)
 # -----------------------------------------------------------------------------
 API_ENDPOINTS = {
     "아파트": "http://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev",
@@ -324,7 +327,11 @@ def get_nearby_lawd_codes(lat, lng, radius_km=1.5):
             res = requests.get(f"https://dapi.kakao.com/v2/local/geo/coord2regioncode.json?x={c_lng}&y={c_lat}", headers=headers, timeout=3).json()
             if res.get('documents'):
                 d = res['documents'][0]
-                lawd_info[d['code'][:5]] = f"{d.get('region_1depth_name','')} {d.get('region_2depth_name','')} {d.get('region_3depth_name','')}".strip()
+                code_5 = d['code'][:5]
+                region_2 = d.get('region_2depth_name', '').strip()
+                region_1 = d.get('region_1depth_name', '').strip()
+                district_name = region_2 if region_2 else region_1
+                lawd_info[code_5] = district_name
         except Exception: pass
     return lawd_info
 
@@ -527,9 +534,8 @@ if candidates:
     )
 
     display_regions = format_region_display(region_list)
-    region_bullets_html = "".join([f"<div style='margin-left: 10px;'>- {r}</div>" for r in display_regions])
-
-    # 2. 사이드바 안내 상자 (빈 줄 제거 및 이모지 적용)
+    
+    region_bullets_html = "".join([f"<div style='margin-left: 10px;'>• {r}</div>" for r in display_regions])
     st.sidebar.markdown(f"""
     <div class="info-banner-sidebar">
         📍 <b>검색 위치 :</b> {full_address}<br>
@@ -552,7 +558,6 @@ if candidates:
         for _, r in apt_grp.iterrows():
             item_apt_name = str(r['통합물건명']).strip()
             
-            # 1. 마커 하이라이트 조건: 검색한 장소명/건물명과 일치할 때만 적용 (인접 물건 미적용)
             is_target = False
             if target_name and target_name != selected_candidate.get('address', '').strip():
                 if target_name in item_apt_name or item_apt_name in target_name:
@@ -570,7 +575,7 @@ if candidates:
         for _, r in filtered_df.iterrows():
             trade_list.append({"apt_name": str(r['통합물건명']), "area": f"{float(r['면적(㎡)']):.1f}", "floor": str(r['층수']), "price_raw": int(r['매매가(만원)']), "price_fmt": format_korean_price(r['매매가(만원)']), "deal_date": str(r['계약일'])})
 
-    # 3. 반응형 지도 컴포넌트 출력
+    # 지도 컴포넌트 호출
     kakao_map_component(
         key="kakao_map_comp",
         center_lat=lat,
