@@ -156,7 +156,7 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
     <div id="map-container">
         <div id="loading-overlay">
             <div class="spinner-icon"></div>
-            <div style="font-size: 20px; font-weight: bold; color: #f3f4f6;">📊 지도 오버레이 렌더링 중...</div>
+            <div style="font-size: 20px; font-weight: bold; color: #f3f4f6;">지도 오버레이 렌더링 중...</div>
         </div>
         <div id="map" style="width: 100%; height: 100%;"></div>
         <div id="detail-panel">
@@ -507,7 +507,7 @@ if candidates:
     prop_type = st.session_state.get("submitted_property_type", "아파트")
     months_opt = st.session_state.get("submitted_months", 12)
 
-    with st.spinner("📊 실거래가 데이터 및 카카오 지도 렌더링 중..."):
+    with st.spinner("실거래가 데이터 및 카카오 지도 렌더링 중..."):
         lat, lng, full_address, _, region_list, filtered_df = fetch_real_estate_ultra_fast(
             selected_candidate['lat'], selected_candidate['lng'], selected_candidate['address'], selected_candidate['place_name'], prop_type, months_opt
         )
