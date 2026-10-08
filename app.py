@@ -565,7 +565,7 @@ def fetch_molit_single_task(lawd_cd, ymd, property_type):
             'numOfRows': '1000'
         }
         try:
-            res = requests.get(api_url, params=params, timeout=3)
+            res = requests.get(api_url, params=params, timeout=4)
             if res.status_code == 200:
                 root = ET.fromstring(res.content)
                 items = root.findall('.//item')
@@ -576,19 +576,27 @@ def fetch_molit_single_task(lawd_cd, ymd, property_type):
                     umd_name = get_xml_text(item, ['umdNm', 'umdName', 'dong'])
                     jibun_val = get_xml_text(item, ['jibun', 'lnbr'])
 
+                    # 건물명 파싱 태그 확장 및 폴백(Fallback) 강화
                     if property_type == "아파트":
-                        apt_name = get_xml_text(item, ['aptNm', 'aptName'], default='아파트')
+                        apt_name = get_xml_text(item, ['aptNm', 'aptName'])
                     elif property_type == "연립/다세대":
-                        apt_name = get_xml_text(item, ['mhbNm', 'mhbName', 'rhNm'], default='연립다세대')
+                        apt_name = get_xml_text(item, ['mhbNm', 'mhbName', 'rhNm', 'vesselNm', 'buildingNm'])
                     elif property_type == "오피스텔":
-                        apt_name = get_xml_text(item, ['offiNm', 'offiName', 'aptNm'], default='오피스텔')
+                        apt_name = get_xml_text(item, ['offiNm', 'offiName', 'aptNm'])
                     elif property_type == "단독/다가구":
-                        apt_name = get_xml_text(item, ['houseType'], default='단독/다가구')
+                        apt_name = get_xml_text(item, ['houseType'])
                     elif property_type == "토지":
                         jimok = get_xml_text(item, ['jimok'], default='-')
                         apt_name = f"토지({jimok})"
                     else:
-                        apt_name = "부동산"
+                        apt_name = ""
+
+                    # 건물 이름이 빈값으로 수집되는 경우 주소(동+지번)로 대체
+                    if not apt_name:
+                        if umd_name and jibun_val:
+                            apt_name = f"{umd_name} {jibun_val}"
+                        else:
+                            apt_name = f"{property_type}"
 
                     price_str = get_xml_text(item, ['dealAmount', 'dealAmountManwon'], default='0').replace(',', '').strip()
                     
@@ -631,16 +639,16 @@ def get_cached_apt_coord(region_name, umd_name, jibun, apt_name):
     headers = {"Authorization": f"KakaoAK {KAKAO_REST_KEY}"}
     search_queries = []
     
-    if umd_name and jibun and apt_name and apt_name not in ["오피스텔", "연립다세대", "단독/다가구", "부동산"] and not apt_name.startswith("토지("):
+    if umd_name and jibun and apt_name and not apt_name.startswith("토지("):
         search_queries.append((f"{region_name} {umd_name} {jibun} {apt_name}", "keyword"))
     
-    if region_name and apt_name and apt_name not in ["오피스텔", "연립다세대", "단독/다가구", "부동산"] and not apt_name.startswith("토지("):
+    if region_name and apt_name and not apt_name.startswith("토지("):
         search_queries.append((f"{region_name} {apt_name}", "keyword"))
         
     if umd_name and jibun:
         search_queries.append((f"{region_name} {umd_name} {jibun}", "address"))
         
-    if apt_name and apt_name not in ["오피스텔", "연립다세대", "단독/다가구", "부동산"] and not apt_name.startswith("토지("):
+    if apt_name and not apt_name.startswith("토지("):
         search_queries.append((apt_name, "keyword"))
         
     if umd_name:
@@ -738,7 +746,6 @@ def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_ty
 # -----------------------------------------------------------------------------
 # 5. 사이드바 UI 및 로직
 # -----------------------------------------------------------------------------
-# 글자 크기 30px 적용
 st.sidebar.markdown(
     "<h3 style='font-size: 30px; font-weight: bold; margin-bottom: 10px;'>🏢 한국자산관리아카데미</h3>", 
     unsafe_allow_html=True
@@ -890,7 +897,6 @@ if selected_candidate:
                 "deal_date": str(r['계약일'])
             })
 
-    # 화이트/다크 모드 선명도 대응 제목
     st.markdown("<h2 class='main-map-title'>🗺️ 부동산 실거래가 시세 지도</h2>", unsafe_allow_html=True)
 
     kakao_map_component(
