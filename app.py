@@ -92,27 +92,22 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
     <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={KAKAO_JS_KEY}&libraries=clusterer"></script>
     <style>
         html, body {{ width: 100%; height: 100vh; margin: 0; padding: 0; overflow: hidden; font-family: sans-serif; }}
-        #map-container {{ 
-            position: relative; 
-            width: 100%; 
-            height: 100vh; 
-            min-height: 650px;
-            border-radius: 12px; 
-            overflow: hidden; 
-            border: 1px solid #374151; 
-        }}
-        #map {{ width: 100%; height: 100%; }}
-        
-        #map-loader {{
-            position: fixed;
-            top: 0;
-            left: 0;
+        #map-container {{
+            position: relative;
             width: 100%;
             height: 100%;
-            background: rgba(17, 24, 39, 0.8);
+            overflow: hidden;
+        }}
+        #map-loader {{
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(17, 24, 39, 0.85);
             backdrop-filter: blur(4px);
             -webkit-backdrop-filter: blur(4px);
-            z-index: 999999;
+            z-index: 99999;
             display: flex;
             flex-direction: column;
             justify-content: center;
@@ -150,12 +145,10 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
 <body>
     <div id="map-container">
         <div id="map-loader">
-            <svg width="50" height="50" viewBox="0 0 50 50" style="margin-bottom: 12px;">
-                <circle cx="25" cy="25" r="20" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="5"></circle>
-                <circle cx="25" cy="25" r="20" fill="none" stroke="#10b981" stroke-width="5" stroke-dasharray="31.4 94.2">
-                    <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="0.8s" repeatCount="indefinite"/>
-                </circle>
-            </svg>
+            <div style="width: 44px; height: 44px; border: 4px solid rgba(255,255,255,0.2); border-top-color: #10b981; border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 12px;"></div>
+            <style>
+                @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
+            </style>
             <div id="loader-msg" style="font-size: 14px; font-weight: 600; color: #f3f4f6; text-align: center; padding: 0 20px;">
                 실거래 데이터를 불러오는 중입니다...
             </div>
@@ -185,7 +178,11 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
         
         function hideLoader() {{
             var loader = document.getElementById('map-loader');
-            if (loader) loader.style.display = 'none';
+            if (loader) {{
+                loader.style.opacity = '0';
+                loader.style.pointerEvents = 'none';
+                setTimeout(function() {{ loader.style.display = 'none'; }}, 200);
+            }}
         }}
 
         function notifyHeight() {{
@@ -319,13 +316,16 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
                         overlays.push(o);
                     }});
                     
-                    clusterer.addMarkers(markers);
-                    closePanel();
-                }}
-
-                isMapInitialized = true;
-                notifyHeight();
-                setTimeout(hideLoader, 200);
+                    try {{
+                        clusterer.addMarkers(markers);
+                        closePanel();
+                    }} catch(e) {{
+                        console.error(e);
+                    }} finally {{
+                        isMapInitialized = true;
+                        notifyHeight();
+                        hideLoader();
+                    }}
             }});
         }}
     </script>
