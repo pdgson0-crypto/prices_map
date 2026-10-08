@@ -52,12 +52,28 @@ def format_region_display(region_list):
 
 st.set_page_config(page_title="부동산 실거래가 지도", layout="wide")
 
+# 반응형 지도 및 사이드바 배너 스타일 정의
 st.markdown("""
 <style>
-    .info-banner-sidebar { background: #064e3b; border: 1px solid #10b981; border-radius: 8px; padding: 14px; margin-top: 15px; font-size: 13px; color: #ecfdf5; line-height: 1.7; }
-    [data-testid="stSidebar"] { min-width: 350px !important; max-width: 500px !important; }
+    .info-banner-sidebar { 
+        background: #064e3b; 
+        border: 1px solid #10b981; 
+        border-radius: 8px; 
+        padding: 12px 14px; 
+        margin-top: 12px; 
+        font-size: 13px; 
+        color: #ecfdf5; 
+        line-height: 1.6; 
+    }
+    [data-testid="stSidebar"] { min-width: 340px !important; max-width: 450px !important; }
     [data-testid="stSidebarCollapseButton"], [data-testid="collapsedControl"], header[data-testid="stHeader"] { display: none !important; }
-    .block-container { padding-top: 0.8rem !important; padding-bottom: 0 !important; padding-left: 0.8rem !important; padding-right: 0.8rem !important; }
+    .block-container { padding-top: 0.5rem !important; padding-bottom: 0 !important; padding-left: 0.5rem !important; padding-right: 0.5rem !important; }
+    
+    /* 적응형 지도 프레임 설정 */
+    iframe[title="kakao_map_comp.kakao_map_comp"] {
+        height: calc(100vh - 2rem) !important;
+        min-height: 550px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -69,7 +85,7 @@ except Exception:
     st.error("⚠️ Streamlit Secrets 키를 설정해주세요.")
 
 # -----------------------------------------------------------------------------
-# 1. 카카오 지도 컴포넌트
+# 1. 카카오 지도 컴포넌트 (적응형 높이 지원)
 # -----------------------------------------------------------------------------
 MAP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "kakao_map_comp"))
 os.makedirs(MAP_DIR, exist_ok=True)
@@ -82,7 +98,15 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
     <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={KAKAO_JS_KEY}&libraries=clusterer"></script>
     <style>
         html, body {{ width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; font-family: sans-serif; }}
-        #map-container {{ position: relative; width: 100%; height: 1000px; border-radius: 12px; overflow: hidden; border: 1px solid #374151; }}
+        #map-container {{ 
+            position: relative; 
+            width: 100%; 
+            height: calc(100vh - 15px); 
+            min-height: 550px;
+            border-radius: 12px; 
+            overflow: hidden; 
+            border: 1px solid #374151; 
+        }}
         #map {{ width: 100%; height: 100%; }}
         
         #map-loader {{
@@ -119,7 +143,7 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
         }}
         .custom-overlay-card:hover {{ transform: scale(1.08); border-color: #2563eb; }}
         
-        /* 검색한 대상 물건 하이라이트 (노란색 배경) */
+        /* 일치 물건 하이라이트 (노란색 배경) */
         .custom-overlay-card.highlight-target {{
             background: #fef08a !important;
             border: 2.5px solid #d97706 !important;
@@ -161,6 +185,14 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
             if (loader) loader.style.display = 'none';
         }}
 
+        function notifyHeight() {{
+            var h = window.innerHeight ? window.innerHeight - 10 : 850;
+            sendMsg("streamlit:setFrameHeight", {{ height: Math.max(h, 550) }});
+            if (map) map.relayout();
+        }}
+
+        window.addEventListener("resize", notifyHeight);
+
         function openPanel(aptName) {{
             var panel = document.getElementById('detail-panel'), trades = allTradeData.filter(d => d.apt_name === aptName);
             if (!trades.length) return closePanel();
@@ -183,7 +215,7 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
 
         window.addEventListener("message", e => {{ if (e.data && e.data.type === "streamlit:render") renderMap(e.data.args); }});
         sendMsg("streamlit:componentReady", {{ apiVersion: 1 }});
-        sendMsg("streamlit:setFrameHeight", {{ height: 1020 }});
+        notifyHeight();
 
         function renderMap(props) {{
             var loader = document.getElementById('map-loader');
@@ -259,6 +291,7 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
                 
                 clusterer.addMarkers(markers);
                 closePanel();
+                notifyHeight();
                 setTimeout(hideLoader, 300);
             }});
         }}
@@ -272,7 +305,7 @@ with open(INDEX_HTML_PATH, "w", encoding="utf-8") as f:
 kakao_map_component = components.declare_component("kakao_map_comp", path=MAP_DIR)
 
 # -----------------------------------------------------------------------------
-# 2. 데이터 수집 및 정밀 좌표 변환
+# 2. 데이터 수집 및 좌표 변환
 # -----------------------------------------------------------------------------
 API_ENDPOINTS = {
     "아파트": "http://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev",
@@ -463,7 +496,7 @@ def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_ty
 # -----------------------------------------------------------------------------
 # 3. 메인 실행 영역
 # -----------------------------------------------------------------------------
-st.sidebar.markdown("<h3 style='font-size: 24px; font-weight: bold;'>🏢 한국자산관리아카데미</h3>", unsafe_allow_html=True)
+st.sidebar.markdown("<h3 style='font-size: 24px; font-weight: bold; margin-bottom: 0px;'>🏢 한국자산관리아카데미</h3>", unsafe_allow_html=True)
 st.sidebar.title("📍 주소 및 조건")
 
 with st.sidebar.form(key="search_form"):
@@ -494,15 +527,15 @@ if candidates:
     )
 
     display_regions = format_region_display(region_list)
-    region_bullets_html = "".join([f"<div style='margin-left: 8px;'>- {r}</div>" for r in display_regions])
+    region_bullets_html = "".join([f"<div style='margin-left: 10px;'>- {r}</div>" for r in display_regions])
 
-    # 1. 사이드바 안내 상자 개편
+    # 2. 사이드바 안내 상자 (빈 줄 제거 및 이모지 적용)
     st.sidebar.markdown(f"""
     <div class="info-banner-sidebar">
-        <b>검색 위치 :</b> {full_address}<br><br>
-        <b>수집 지역</b><br>
-        {region_bullets_html}<br>
-        <b>[{prop_type}] 최근 {months_opt//12}년 실거래 총 {len(filtered_df):,}건</b>
+        📍 <b>검색 위치 :</b> {full_address}<br>
+        🏛️ <b>수집 지역</b>
+        {region_bullets_html}
+        📊 <b>[{prop_type}] 최근 {months_opt//12}년 실거래 총 {len(filtered_df):,}건</b>
     </div>
     """, unsafe_allow_html=True)
 
@@ -514,18 +547,19 @@ if candidates:
 
         apt_grp = filtered_df.groupby('통합물건명').agg(평균매매가=('매매가(만원)', 'mean'), 거래건수=('매매가(만원)', 'count'), lat=('lat', 'first'), lng=('lng', 'first')).reset_index()
 
-        # 검색한 중앙점 좌표와의 거리 계산
-        apt_grp['dist_to_search'] = apt_grp.apply(lambda r: haversine_distance(lat, lng, r['lat'], r['lng']), axis=1)
-        min_dist = apt_grp['dist_to_search'].min() if not apt_grp.empty else 999
+        target_name = selected_candidate.get('place_name', '').strip()
 
         for _, r in apt_grp.iterrows():
-            # 검색 위치와 가장 가깝거나(300m 이내) 이름이 부합하는 대상 하이라이트
-            is_closest = (r['dist_to_search'] == min_dist and min_dist < 0.3)
-            is_name_match = bool(selected_candidate['place_name'] and selected_candidate['place_name'] in str(r['통합물건명']))
-            is_target = bool(is_closest or is_name_match)
+            item_apt_name = str(r['통합물건명']).strip()
+            
+            # 1. 마커 하이라이트 조건: 검색한 장소명/건물명과 일치할 때만 적용 (인접 물건 미적용)
+            is_target = False
+            if target_name and target_name != selected_candidate.get('address', '').strip():
+                if target_name in item_apt_name or item_apt_name in target_name:
+                    is_target = True
 
             apt_summary_list.append({
-                "apt_name": str(r['통합물건명']),
+                "apt_name": item_apt_name,
                 "avg_price_fmt": format_korean_price(r['평균매매가']),
                 "count": int(r['거래건수']),
                 "lat": float(r['lat']),
@@ -536,7 +570,7 @@ if candidates:
         for _, r in filtered_df.iterrows():
             trade_list.append({"apt_name": str(r['통합물건명']), "area": f"{float(r['면적(㎡)']):.1f}", "floor": str(r['층수']), "price_raw": int(r['매매가(만원)']), "price_fmt": format_korean_price(r['매매가(만원)']), "deal_date": str(r['계약일'])})
 
-    # 상단 메인 제목 삭제 및 지도로 꽉 채우기
+    # 3. 반응형 지도 컴포넌트 출력
     kakao_map_component(
         key="kakao_map_comp",
         center_lat=lat,
