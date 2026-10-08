@@ -110,7 +110,7 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
             justify-content: center; align-items: center; color: #ffffff;
             transition: opacity 0.2s ease;
         }}
-        .spinner {
+        .spinner {{
             width: 48px;
             height: 48px;
             border: 5px solid rgba(255, 255, 255, 0.2);
@@ -120,7 +120,7 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
             animation: spin 0.8s linear infinite;
             box-sizing: border-box;
             margin-bottom: 12px;
-        }
+        }}
         @-webkit-keyframes spin {{ 0% {{ -webkit-transform: rotate(0deg); }} 100% {{ -webkit-transform: rotate(360deg); }} }}
         @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
         
