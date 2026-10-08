@@ -89,14 +89,23 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
     <meta charset="utf-8">
     <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={KAKAO_JS_KEY}&libraries=clusterer&autoload=false"></script>
     <style>
-        html, body {{ width: 100%; height: 100vh; margin: 0; padding: 0; overflow: hidden; font-family: sans-serif; }}
+        html, body {{ width: 100%; height: 100vh; margin: 0; padding: 0; overflow: hidden; font-family: sans-serif; background: #111827; }}
         #map-container {{ position: relative; width: 100%; height: 100%; overflow: hidden; }}
+        
+        /* 검은색 화면 및 수집중 메시지 오버레이 */
         #loading-overlay {{
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(17, 24, 39, 0.85); z-index: 99999;
-            display: flex; justify-content: center; align-items: center;
-            color: #ffffff; font-size: 16px; font-weight: bold;
+            background: rgba(17, 24, 39, 0.95); z-index: 99999;
+            display: flex; flex-direction: column; justify-content: center; align-items: center;
+            color: #ffffff; text-align: center; box-sizing: border-box; padding: 20px;
         }}
+        .spinner-icon {{
+            width: 42px; height: 42px; border: 4px solid #374151;
+            border-top: 4px solid #60a5fa; border-radius: 50%;
+            animation: spin 0.9s linear infinite; margin-bottom: 16px;
+        }}
+        @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
+
         #detail-panel {{ position: absolute; top: 0; right: -430px; width: 410px; height: 100%; background: #111827; color: #f3f4f6; transition: right 0.3s; z-index: 80000; display: flex; flex-direction: column; border-left: 1px solid #374151; }}
         #detail-panel.open {{ right: 0; }}
         .panel-header {{ padding: 16px; background: #1f2937; border-bottom: 1px solid #374151; display: flex; justify-content: space-between; }}
@@ -120,9 +129,11 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
 </head>
 <body>
     <div id="map-container">
-        <!-- 검은색 로딩 막 및 문구 -->
+        <!-- 검은색 바탕 수집 및 렌더링 중 안내 오버레이 -->
         <div id="loading-overlay">
-            ⏳ 데이터를 불러오는 중입니다...
+            <div class="spinner-icon"></div>
+            <div style="font-size: 20px; font-weight: bold; color: #f3f4f6;">📊 실거래가 데이터 수집 및 지도 렌더링 중...</div>
+            <div style="font-size: 13px; color: #9ca3af; margin-top: 8px;">국토교통부 데이터를 파싱하여 마커를 배치하고 있습니다.</div>
         </div>
 
         <div id="map" style="width: 100%; height: 100%;"></div>
@@ -354,16 +365,34 @@ def fetch_molit_single_task(lawd_cd, ymd, property_type):
                     elif property_type == "오피스텔":
                         apt_name = get_xml_text(item, ['offiNm', 'offiName', 'aptNm'])
                         area_val = get_xml_text(item, ['excluUseAr', 'excluArea', 'area'])
+                    elif property_type == "토지":
+                        apt_name = ""
+                        # 토지는 거래면적(dealArea) 태그 우선 파싱
+                        area_val = get_xml_text(item, ['dealArea', 'plottageArea', 'totArea', 'myeonArea', 'area'])
                     else:
                         apt_name = ""
-                        area_val = get_xml_text(item, ['totalFloorArea', 'totArea', 'plottageArea'])
+                        area_val = get_xml_text(item, ['totalFloorArea', 'totArea', 'plottageArea', 'area'])
 
                     raw_apt_name = apt_name
+                    # 건물명이 비어 있는 경우 부동산 유형별로 가공 (토지에 '빌라'가 붙던 원인 해결)
                     if not apt_name or not apt_name.strip():
-                        if umd_name and jibun_val:
-                            apt_name = f"{umd_name} {jibun_val} 빌라"
+                        if property_type == "토지":
+                            jimok_val = get_xml_text(item, ['jimok'])
+                            suffix = f" ({jimok_val})" if jimok_val else " (토지)"
+                            if umd_name and jibun_val:
+                                apt_name = f"{umd_name} {jibun_val}{suffix}"
+                            else:
+                                apt_name = "토지 매매"
+                        elif property_type == "단독/다가구":
+                            if umd_name and jibun_val:
+                                apt_name = f"{umd_name} {jibun_val} (단독/다가구)"
+                            else:
+                                apt_name = "단독/다가구"
                         else:
-                            apt_name = "연립다세대"
+                            if umd_name and jibun_val:
+                                apt_name = f"{umd_name} {jibun_val} 빌라"
+                            else:
+                                apt_name = "연립다세대"
 
                     price_str = get_xml_text(item, ['dealAmount', 'dealAmountManwon'], default='0').replace(',', '').strip()
                     area = float(area_val) if area_val and area_val != '0' else 0.0
@@ -380,7 +409,7 @@ def fetch_molit_single_task(lawd_cd, ymd, property_type):
                         "jibun": jibun_val,
                         "price": int(price_str) if price_str.isdigit() else 0,
                         "area": area,
-                        "floor": f"{floor_val}층" if floor_val else "-",
+                        "floor": f"{floor_val}층" if (floor_val and property_type != "토지") else "-",
                         "deal_date": f"{deal_year}-{deal_month}-{deal_day}"
                     })
                 
@@ -492,9 +521,10 @@ if candidates:
     prop_type = st.session_state.get("submitted_property_type", "아파트")
     months_opt = st.session_state.get("submitted_months", 12)
 
-    lat, lng, full_address, _, region_list, filtered_df = fetch_real_estate_ultra_fast(
-        selected_candidate['lat'], selected_candidate['lng'], selected_candidate['address'], selected_candidate['place_name'], prop_type, months_opt
-    )
+    with st.spinner("⏳ 국토교통부 실거래가 데이터 수집 중입니다..."):
+        lat, lng, full_address, _, region_list, filtered_df = fetch_real_estate_ultra_fast(
+            selected_candidate['lat'], selected_candidate['lng'], selected_candidate['address'], selected_candidate['place_name'], prop_type, months_opt
+        )
 
     display_regions = format_region_display(region_list)
     region_bullets_html = "".join([f"<div style='margin-left: 10px;'>• {r}</div>" for r in display_regions])
