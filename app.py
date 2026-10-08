@@ -45,7 +45,6 @@ st.set_page_config(page_title="부동산 실거래가 지도", layout="wide")
 
 st.markdown("""
 <style>
-    /* Streamlit Spinner를 화면 중앙 고정 레이어로 변환 (지도 밀림 현상 방지) */
     div[data-testid="stSpinner"] {
         position: fixed !important;
         top: 0 !important;
@@ -68,7 +67,6 @@ st.markdown("""
         justify-content: center !important;
         gap: 12px !important;
     }
-
     .info-banner-sidebar { 
         background: #064e3b; 
         border: 1px solid #10b981; 
@@ -101,7 +99,7 @@ except Exception:
     st.error("⚠️ Streamlit Secrets 키를 설정해주세요.")
 
 # -----------------------------------------------------------------------------
-# 1. 카카오 지도 컴포넌트
+# 1. 카카오 지도 컴포넌트 파일 생성
 # -----------------------------------------------------------------------------
 MAP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "kakao_map_comp"))
 os.makedirs(MAP_DIR, exist_ok=True)
@@ -115,7 +113,6 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
     <style>
         html, body {{ width: 100%; height: 100vh; margin: 0; padding: 0; overflow: hidden; font-family: sans-serif; background: #111827; }}
         #map-container {{ position: relative; width: 100%; height: 100%; overflow: hidden; }}
-        
         #loading-overlay {{
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(17, 24, 39, 0.95); z-index: 99999;
@@ -128,7 +125,6 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
             animation: spin 0.9s linear infinite; margin-bottom: 16px;
         }}
         @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
-
         #detail-panel {{ position: absolute; top: 0; right: -430px; width: 410px; height: 100%; background: #111827; color: #f3f4f6; transition: right 0.3s; z-index: 80000; display: flex; flex-direction: column; border-left: 1px solid #374151; }}
         #detail-panel.open {{ right: 0; }}
         .panel-header {{ padding: 16px; background: #1f2937; border-bottom: 1px solid #374151; display: flex; justify-content: space-between; }}
@@ -139,7 +135,6 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
         .panel-table {{ width: 100%; border-collapse: collapse; font-size: 13px; text-align: center; }}
         .panel-table th, .panel-table td {{ padding: 10px 4px; border-bottom: 1px solid #374151; }}
         .panel-table th {{ background: #1f2937; color: #d1d5db; position: sticky; top: 0; }}
-
         .custom-overlay-card {{
             cursor: pointer; padding: 6px 10px; background: white; color: #2c3e50;
             border: 2px solid #e74c3c; border-radius: 10px; font-weight: bold; font-size: 12px;
@@ -163,9 +158,7 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
             <div class="spinner-icon"></div>
             <div style="font-size: 20px; font-weight: bold; color: #f3f4f6;">📊 지도 오버레이 렌더링 중...</div>
         </div>
-
         <div id="map" style="width: 100%; height: 100%;"></div>
-
         <div id="detail-panel">
             <div class="panel-header">
                 <div><div id="panel-title" class="panel-title">물건 정보</div><div id="panel-sub" style="font-size:13px; color:#9ca3af;">거래 0건</div></div>
@@ -179,30 +172,20 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
             </div>
         </div>
     </div>
-
     <script>
         var map, clusterer, markers = [], overlays = [], allTradeData = [];
-
         function sendMsg(type, data) {{ window.parent.postMessage(Object.assign({{ isStreamlitMessage: true, type: type }}, data), "*"); }}
         function closePanel() {{ document.getElementById('detail-panel').classList.remove('open'); }}
-
         function notifyHeight() {{
             var h = 850;
             try {{
-                if (window.top && window.top.innerHeight) {{
-                    h = window.top.innerHeight - 30;
-                }} else if (window.parent && window.parent.innerHeight) {{
-                    h = window.parent.innerHeight - 30;
-                }}
-            }} catch(e) {{
-                h = Math.max(window.innerHeight, 850);
-            }}
+                if (window.top && window.top.innerHeight) h = window.top.innerHeight - 30;
+                else if (window.parent && window.parent.innerHeight) h = window.parent.innerHeight - 30;
+            }} catch(e) {{ h = Math.max(window.innerHeight, 850); }}
             sendMsg("streamlit:setFrameHeight", {{ height: Math.max(h, 650) }});
             if (map) map.relayout();
         }}
-
         window.addEventListener("resize", notifyHeight);
-
         function openPanel(aptName) {{
             var panel = document.getElementById('detail-panel'), trades = allTradeData.filter(function(d) {{ return d.apt_name === aptName; }});
             if (!trades.length) return closePanel();
@@ -216,13 +199,11 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
             }});
             panel.classList.add('open');
         }}
-
         function formatPrice(p) {{
             if (!p || p <= 0) return '0만';
             var u = Math.floor(p / 10000), m = p % 10000;
             return (u > 0 ? u.toLocaleString() + '억 ' : '') + (m > 0 || u === 0 ? m.toLocaleString() + '만' : '');
         }}
-
         window.addEventListener("message", function(e) {{ if (e.data && e.data.type === "streamlit:render") renderMap(e.data.args); }});
         sendMsg("streamlit:componentReady", {{ apiVersion: 1 }});
         notifyHeight();
@@ -230,102 +211,57 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
         function renderMap(props) {{
             var loader = document.getElementById('loading-overlay');
             if (loader) loader.style.display = 'flex';
-
             kakao.maps.load(function() {{
                 try {{
                     var container = document.getElementById('map');
                     var pos = new kakao.maps.LatLng(props.center_lat, props.center_lng);
-
-                    if (!map) {{
-                        map = new kakao.maps.Map(container, {{ center: pos, level: 3 }});
-                    }} else {{
-                        map.setCenter(pos);
-                        map.setLevel(3);
-                        map.relayout();
-                    }}
+                    if (!map) map = new kakao.maps.Map(container, {{ center: pos, level: 3 }});
+                    else {{ map.setCenter(pos); map.setLevel(3); map.relayout(); }}
 
                     if (clusterer) clusterer.clear();
                     markers.forEach(function(m) {{ m.setMap(null); }});
                     overlays.forEach(function(o) {{ o.setMap(null); }});
-                    markers = [];
-                    overlays = [];
+                    markers = []; overlays = [];
                     allTradeData = props.all_trades || [];
 
-                    if (!clusterer) {{
-                        clusterer = new kakao.maps.MarkerClusterer({{ map: map, averageCenter: true, minLevel: 5 }});
-                    }}
+                    if (!clusterer) clusterer = new kakao.maps.MarkerClusterer({{ map: map, averageCenter: true, minLevel: 5 }});
 
                     (props.apt_summary || []).forEach(function(item) {{
                         var p = new kakao.maps.LatLng(item.lat, item.lng);
                         var m = new kakao.maps.Marker({{ position: p, clickable: true }});
-
                         var baseZIndex = item.is_target ? 500 : 10;
-
                         var div = document.createElement('div');
                         div.className = 'custom-overlay-card' + (item.is_target ? ' highlight-target' : '');
                         div.innerHTML = item.apt_name + '<br><span style="color:' + (item.is_target ? '#b45309' : '#e74c3c') + ';">평균 ' + item.avg_price_fmt + '</span> <span style="font-size:11px;color:#64748b;">(' + item.count + '건)</span>';
 
-                        var o = new kakao.maps.CustomOverlay({{
-                            position: p,
-                            clickable: true,
-                            content: div,
-                            yAnchor: 2.2,
-                            zIndex: baseZIndex
-                        }});
+                        var o = new kakao.maps.CustomOverlay({{ position: p, clickable: true, content: div, yAnchor: 2.2, zIndex: baseZIndex }});
+                        div.onmouseenter = function() {{ o.setZIndex(9999); div.style.zIndex = "9999"; div.classList.add('hover-active'); }};
+                        div.onmouseleave = function() {{ o.setZIndex(baseZIndex); div.style.zIndex = baseZIndex; div.classList.remove('hover-active'); }};
+                        div.onclick = function(e) {{ e.stopPropagation(); map.panTo(p); openPanel(item.apt_name); }};
+                        kakao.maps.event.addListener(m, 'click', function() {{ map.panTo(p); openPanel(item.apt_name); }});
 
-                        // 마우스 호버 시 최상단 레벨업 처리 (zIndex: 9999)
-                        div.onmouseenter = function() {{
-                            o.setZIndex(9999);
-                            div.style.zIndex = "9999";
-                            div.classList.add('hover-active');
-                        }};
-
-                        div.onmouseleave = function() {{
-                            o.setZIndex(baseZIndex);
-                            div.style.zIndex = baseZIndex;
-                            div.classList.remove('hover-active');
-                        }};
-
-                        div.onclick = function(e) {{
-                            e.stopPropagation();
-                            map.panTo(p);
-                            openPanel(item.apt_name);
-                        }};
-
-                        kakao.maps.event.addListener(m, 'click', function() {{
-                            map.panTo(p);
-                            openPanel(item.apt_name);
-                        }});
-
-                        m.setMap(map);
-                        o.setMap(map);
-                        markers.push(m);
-                        overlays.push(o);
+                        m.setMap(map); o.setMap(map);
+                        markers.push(m); overlays.push(o);
                     }});
-
-                    if (clusterer && markers.length > 0) {{
-                        clusterer.addMarkers(markers);
-                    }}
+                    if (clusterer && markers.length > 0) clusterer.addMarkers(markers);
                     closePanel();
-                }} catch(e) {{
-                    console.error("Map Error:", e);
-                }} finally {{
-                    if (loader) loader.style.display = 'none';
-                    notifyHeight();
-                }}
+                }} catch(e) {{ console.error("Map Error:", e); }}
+                finally {{ if (loader) loader.style.display = 'none'; notifyHeight(); }}
             }});
         }}
     </script>
 </body>
 </html>"""
 
-with open(INDEX_HTML_PATH, "w", encoding="utf-8") as f:
-    f.write(INDEX_HTML_CONTENT)
+# 매번 쓰지 않고 내용 변경 시에만 업데이트
+if not os.path.exists(INDEX_HTML_PATH) or open(INDEX_HTML_PATH, 'r', encoding='utf-8').read() != INDEX_HTML_CONTENT:
+    with open(INDEX_HTML_PATH, "w", encoding="utf-8") as f:
+        f.write(INDEX_HTML_CONTENT)
 
 kakao_map_component = components.declare_component("kakao_map_comp", path=MAP_DIR)
 
 # -----------------------------------------------------------------------------
-# 2. 데이터 수집 및 좌표 변환
+# 2. 데이터 수집 API 및 캐싱 최적화 영역
 # -----------------------------------------------------------------------------
 API_ENDPOINTS = {
     "아파트": "http://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev",
@@ -347,8 +283,7 @@ def get_nearby_lawd_codes(lat, lng, radius_km=1.5):
                 code_5 = d['code'][:5]
                 region_2 = d.get('region_2depth_name', '').strip()
                 region_1 = d.get('region_1depth_name', '').strip()
-                district_name = region_2 if region_2 else region_1
-                lawd_info[code_5] = district_name
+                lawd_info[code_5] = region_2 if region_2 else region_1
         except Exception: pass
     return lawd_info
 
@@ -367,21 +302,15 @@ def search_location_candidates(query):
         except Exception: pass
     return candidates
 
-@st.cache_data(ttl=86400, show_spinner=False)
-def fetch_molit_single_task(lawd_cd, ymd, property_type):
+# 단일 월 데이터 조회 기본 함수
+def fetch_molit_core(lawd_cd, ymd, property_type):
     api_url = API_ENDPOINTS.get(property_type, API_ENDPOINTS["아파트"])
     items_list = []
     page_no = 1
     clean_key = requests.utils.unquote(MOLIT_SERVICE_KEY)
     
     while True:
-        params = {
-            'serviceKey': clean_key,
-            'LAWD_CD': lawd_cd,
-            'DEAL_YMD': ymd,
-            'pageNo': str(page_no),
-            'numOfRows': '100'
-        }
+        params = {'serviceKey': clean_key, 'LAWD_CD': lawd_cd, 'DEAL_YMD': ymd, 'pageNo': str(page_no), 'numOfRows': '100'}
         try:
             res = requests.get(api_url, params=params, timeout=5)
             if res.status_code == 200:
@@ -389,13 +318,14 @@ def fetch_molit_single_task(lawd_cd, ymd, property_type):
                 header_code = root.findtext('.//resultCode') or root.findtext('.//header/resultCode')
                 if header_code and header_code not in ['00', '000']: break
 
-                total_cnt_elem = root.find('.//totalCount') or root.find('.//body/totalCount')
-                total_count = int(total_cnt_elem.text) if total_cnt_elem is not None and total_cnt_elem.text.isdigit() else 0
-
+                # 실거래 해제(취소)된 건 제외하는 로직 반영
                 items = root.findall('.//item')
                 if not items: break
                 
                 for item in items:
+                    c_deal = get_xml_text(item, ['cdealDay', 'cancelDealDay'])
+                    if c_deal: continue # 취소된 거래는 수집 스킵
+
                     umd_name = get_xml_text(item, ['umdNm', 'umdName', 'dong'])
                     jibun_val = get_xml_text(item, ['jibun', 'lnbr'])
 
@@ -420,20 +350,11 @@ def fetch_molit_single_task(lawd_cd, ymd, property_type):
                         if property_type == "토지":
                             jimok_val = get_xml_text(item, ['jimok'])
                             suffix = f" ({jimok_val})" if jimok_val else " (토지)"
-                            if umd_name and jibun_val:
-                                apt_name = f"{umd_name} {jibun_val}{suffix}"
-                            else:
-                                apt_name = "토지 매매"
+                            apt_name = f"{umd_name} {jibun_val}{suffix}" if umd_name and jibun_val else "토지 매매"
                         elif property_type == "단독/다가구":
-                            if umd_name and jibun_val:
-                                apt_name = f"{umd_name} {jibun_val} (단독/다가구)"
-                            else:
-                                apt_name = "단독/다가구"
+                            apt_name = f"{umd_name} {jibun_val} (단독/다가구)" if umd_name and jibun_val else "단독/다가구"
                         else:
-                            if umd_name and jibun_val:
-                                apt_name = f"{umd_name} {jibun_val} 빌라"
-                            else:
-                                apt_name = "연립다세대"
+                            apt_name = f"{umd_name} {jibun_val} 빌라" if umd_name and jibun_val else "연립다세대"
 
                     price_str = get_xml_text(item, ['dealAmount', 'dealAmountManwon'], default='0').replace(',', '').strip()
                     area = float(area_val) if area_val and area_val != '0' else 0.0
@@ -444,16 +365,14 @@ def fetch_molit_single_task(lawd_cd, ymd, property_type):
                     deal_day = get_xml_text(item, ['dealDay', 'day']).zfill(2)
                     
                     items_list.append({
-                        "apt_name": apt_name,
-                        "raw_apt_name": raw_apt_name,
-                        "umd_name": umd_name,
-                        "jibun": jibun_val,
-                        "price": int(price_str) if price_str.isdigit() else 0,
-                        "area": area,
+                        "apt_name": apt_name, "raw_apt_name": raw_apt_name, "umd_name": umd_name, "jibun": jibun_val,
+                        "price": int(price_str) if price_str.isdigit() else 0, "area": area,
                         "floor": f"{floor_val}층" if (floor_val and property_type != "토지") else "-",
                         "deal_date": f"{deal_year}-{deal_month}-{deal_day}"
                     })
                 
+                total_cnt_elem = root.find('.//totalCount') or root.find('.//body/totalCount')
+                total_count = int(total_cnt_elem.text) if total_cnt_elem is not None and total_cnt_elem.text.isdigit() else 0
                 if total_count > 0 and (page_no * 100) >= total_count: break
                 if len(items) < 100: break
                 page_no += 1
@@ -462,7 +381,18 @@ def fetch_molit_single_task(lawd_cd, ymd, property_type):
 
     return items_list
 
-@st.cache_data(ttl=86400, show_spinner=False)
+# ① 과거월 데이터: ttl=None (무기한 영구 메모리 캐시)
+@st.cache_data(ttl=None, show_spinner=False)
+def fetch_past_molit_task(lawd_cd, ymd, property_type):
+    return fetch_molit_core(lawd_cd, ymd, property_type)
+
+# ② 최근월 데이터(당월 및 전월): ttl=3600 (1시간 주기로 최신 반영)
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_recent_molit_task(lawd_cd, ymd, property_type):
+    return fetch_molit_core(lawd_cd, ymd, property_type)
+
+# ③ 카카오 지오코딩 좌표: ttl=None (무기한 영구 메모리 캐시)
+@st.cache_data(ttl=None, show_spinner=False)
 def get_cached_apt_coord(region_name, umd_name, jibun, raw_apt_name):
     headers = {"Authorization": f"KakaoAK {KAKAO_REST_KEY}"}
     if umd_name and jibun and jibun.strip():
@@ -487,18 +417,32 @@ def get_cached_apt_coord(region_name, umd_name, jibun, raw_apt_name):
 
     return None, None
 
-@st.cache_data(ttl=86400, show_spinner=False)
 def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_type, months_count):
     lawd_info = get_nearby_lawd_codes(lat, lng, radius_km=1.5)
     if not lawd_info:
         return lat, lng, full_address, "", [], pd.DataFrame()
 
     region_list = sorted(list(set(lawd_info.values())))
-    tasks = [(code, ymd, property_type) for code in lawd_info.keys() for ymd in get_recent_months(months_count)]
+    all_months = get_recent_months(months_count)
+    
+    # 최근 2개월(당월, 지난달)은 주기적 갱신 대상, 그 이전은 영구 보관 대상
+    recent_months = set(all_months[:2])
+    
+    tasks = []
+    for code in lawd_info.keys():
+        for ymd in all_months:
+            is_recent = ymd in recent_months
+            tasks.append((code, ymd, property_type, is_recent))
 
     raw_items = []
     with ThreadPoolExecutor(max_workers=8) as executor:
-        futures = [executor.submit(fetch_molit_single_task, c, y, p) for c, y, p in tasks]
+        futures = []
+        for c, y, p, is_recent in tasks:
+            if is_recent:
+                futures.append(executor.submit(fetch_recent_molit_task, c, y, p))
+            else:
+                futures.append(executor.submit(fetch_past_molit_task, c, y, p))
+                
         for f in as_completed(futures):
             res = f.result()
             if res: raw_items.extend(res)
@@ -506,11 +450,12 @@ def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_ty
     if not raw_items:
         return lat, lng, full_address, "", region_list, pd.DataFrame()
 
+    # 영구 캐시 처리된 지오코딩 함수 병열 호출
     unique_locs = {(i['umd_name'], i['jibun'], i['apt_name'], i.get('raw_apt_name', '')): i for i in raw_items}
     coord_cache = {}
     main_region = region_list[0] if region_list else ""
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    with ThreadPoolExecutor(max_workers=8) as executor:
         futures = {executor.submit(get_cached_apt_coord, main_region, k[0], k[1], k[3]): k for k in unique_locs.keys()}
         for f in as_completed(futures):
             k = futures[f]
@@ -562,7 +507,7 @@ if candidates:
     prop_type = st.session_state.get("submitted_property_type", "아파트")
     months_opt = st.session_state.get("submitted_months", 12)
 
-    with st.spinner("📊 국토교통부 실거래가 데이터 수집 중입니다..."):
+    with st.spinner("📊 실거래가 데이터 및 카카오 지도 렌더링 중..."):
         lat, lng, full_address, _, region_list, filtered_df = fetch_real_estate_ultra_fast(
             selected_candidate['lat'], selected_candidate['lng'], selected_candidate['address'], selected_candidate['place_name'], prop_type, months_opt
         )
@@ -588,9 +533,7 @@ if candidates:
         apt_grp = filtered_df.groupby('통합물건명').agg(평균매매가=('매매가(만원)', 'mean'), 거래건수=('매매가(만원)', 'count'), lat=('lat', 'first'), lng=('lng', 'first')).reset_index()
         
         target_lat, target_lng = selected_candidate['lat'], selected_candidate['lng']
-        apt_grp['target_dist'] = apt_grp.apply(
-            lambda r: haversine_distance(target_lat, target_lng, r['lat'], r['lng']), axis=1
-        )
+        apt_grp['target_dist'] = apt_grp.apply(lambda r: haversine_distance(target_lat, target_lng, r['lat'], r['lng']), axis=1)
 
         nearby = apt_grp[apt_grp['target_dist'] <= 0.2]
         target_apt_name = nearby.sort_values(by='target_dist').iloc[0]['통합물건명'] if not nearby.empty else None
@@ -609,7 +552,14 @@ if candidates:
             })
 
         for _, r in filtered_df.iterrows():
-            trade_list.append({"apt_name": str(r['통합물건명']), "area": f"{float(r['면적(㎡)']):.1f}", "floor": str(r['층수']), "price_raw": int(r['매매가(만원)']), "price_fmt": format_korean_price(r['매매가(만원)']), "deal_date": str(r['계약일'])})
+            trade_list.append({
+                "apt_name": str(r['통합물건명']),
+                "area": f"{float(r['면적(㎡)']):.1f}",
+                "floor": str(r['층수']),
+                "price_raw": int(r['매매가(만원)']),
+                "price_fmt": format_korean_price(r['매매가(만원)']),
+                "deal_date": str(r['계약일'])
+            })
 
     kakao_map_component(
         key="kakao_map_comp",
