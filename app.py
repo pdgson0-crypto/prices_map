@@ -139,14 +139,21 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
         .panel-table {{ width: 100%; border-collapse: collapse; font-size: 13px; text-align: center; }}
         .panel-table th, .panel-table td {{ padding: 10px 4px; border-bottom: 1px solid #374151; }}
         .panel-table th {{ background: #1f2937; color: #d1d5db; position: sticky; top: 0; }}
+
         .custom-overlay-card {{
             cursor: pointer; padding: 6px 10px; background: white; color: #2c3e50;
             border: 2px solid #e74c3c; border-radius: 10px; font-weight: bold; font-size: 12px;
             box-shadow: 0 2px 6px rgba(0,0,0,0.25); text-align: center;
+            transition: transform 0.15s ease, box-shadow 0.15s ease;
         }}
         .custom-overlay-card.highlight-target {{
             background: #fef08a !important; border: 2.5px solid #d97706 !important;
             color: #0f172a !important;
+        }}
+        .custom-overlay-card.hover-active {{
+            transform: scale(1.1);
+            box-shadow: 0 6px 16px rgba(0,0,0,0.45) !important;
+            border-color: #2563eb !important;
         }}
     </style>
 </head>
@@ -252,6 +259,8 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
                         var p = new kakao.maps.LatLng(item.lat, item.lng);
                         var m = new kakao.maps.Marker({{ position: p, clickable: true }});
 
+                        var baseZIndex = item.is_target ? 500 : 10;
+
                         var div = document.createElement('div');
                         div.className = 'custom-overlay-card' + (item.is_target ? ' highlight-target' : '');
                         div.innerHTML = item.apt_name + '<br><span style="color:' + (item.is_target ? '#b45309' : '#e74c3c') + ';">평균 ' + item.avg_price_fmt + '</span> <span style="font-size:11px;color:#64748b;">(' + item.count + '건)</span>';
@@ -261,8 +270,21 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
                             clickable: true,
                             content: div,
                             yAnchor: 2.2,
-                            zIndex: item.is_target ? 500 : 10
+                            zIndex: baseZIndex
                         }});
+
+                        // 마우스 호버 시 최상단 레벨업 처리 (zIndex: 9999)
+                        div.onmouseenter = function() {{
+                            o.setZIndex(9999);
+                            div.style.zIndex = "9999";
+                            div.classList.add('hover-active');
+                        }};
+
+                        div.onmouseleave = function() {{
+                            o.setZIndex(baseZIndex);
+                            div.style.zIndex = baseZIndex;
+                            div.classList.remove('hover-active');
+                        }};
 
                         div.onclick = function(e) {{
                             e.stopPropagation();
@@ -540,8 +562,7 @@ if candidates:
     prop_type = st.session_state.get("submitted_property_type", "아파트")
     months_opt = st.session_state.get("submitted_months", 12)
 
-    # st.spinner가 화면 전체 중앙 고정 레이어로 덮이므로 지도가 밀리지 않음
-    with st.spinner("국토교통부 실거래가 데이터 수집 중입니다..."):
+    with st.spinner("📊 국토교통부 실거래가 데이터 수집 중입니다..."):
         lat, lng, full_address, _, region_list, filtered_df = fetch_real_estate_ultra_fast(
             selected_candidate['lat'], selected_candidate['lng'], selected_candidate['address'], selected_candidate['place_name'], prop_type, months_opt
         )
