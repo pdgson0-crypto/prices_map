@@ -124,32 +124,32 @@ except Exception:
     KAKAO_JS_KEY = ""
 
 # -----------------------------------------------------------------------------
-# 2. 카카오 지도 컴포넌트 파일 생성 (최초 1회만)
+# 2. 카카오 지도 컴포넌트 HTML 및 자바스크립트
 # -----------------------------------------------------------------------------
 MAP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "kakao_map_comp"))
 os.makedirs(MAP_DIR, exist_ok=True)
 INDEX_HTML_PATH = os.path.join(MAP_DIR, "index.html")
 
-INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
+INDEX_HTML_CONTENT = """<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
-    <script type="text/javascript" src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={KAKAO_JS_KEY}&libraries=clusterer"></script>
+    <script type="text/javascript" src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=""" + KAKAO_JS_KEY + """&libraries=clusterer"></script>
     <style>
-        html, body {{ width: 100%; height: 100%; margin: 0; padding: 0; background: transparent; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }}
+        html, body { width: 100%; height: 100%; margin: 0; padding: 0; background: transparent; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
         
-        #map-container {{
+        #map-container {
             position: relative;
             width: 100%;
             height: 800px;
             border-radius: 12px;
             overflow: hidden;
             border: 1px solid #374151;
-        }}
+        }
 
-        #map {{ width: 100%; height: 100%; }}
+        #map { width: 100%; height: 100%; }
 
-        #detail-panel {{
+        #detail-panel {
             position: absolute;
             top: 0;
             right: -430px;
@@ -164,34 +164,34 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
             flex-direction: column;
             box-sizing: border-box;
             border-left: 1px solid #374151;
-        }}
+        }
 
-        #detail-panel.open {{
+        #detail-panel.open {
             right: 0;
-        }}
+        }
 
-        .panel-header {{
+        .panel-header {
             padding: 16px;
             background: #1f2937;
             border-bottom: 1px solid #374151;
             display: flex;
             justify-content: space-between;
             align-items: flex-start;
-        }}
+        }
 
-        .panel-title {{
+        .panel-title {
             font-size: 17px;
             font-weight: bold;
             color: #60a5fa;
             margin: 0 0 4px 0;
-        }}
+        }
 
-        .panel-sub {{
+        .panel-sub {
             font-size: 13px;
             color: #9ca3af;
-        }}
+        }
 
-        .close-btn {{
+        .close-btn {
             background: #374151;
             border: none;
             color: #9ca3af;
@@ -204,41 +204,41 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
             align-items: center;
             justify-content: center;
             transition: background 0.2s, color 0.2s;
-        }}
-        .close-btn:hover {{ background: #ef4444; color: #ffffff; }}
+        }
+        .close-btn:hover { background: #ef4444; color: #ffffff; }
 
-        .panel-body {{
+        .panel-body {
             flex: 1;
             overflow-y: auto;
             padding: 12px;
-        }}
+        }
 
-        .panel-table {{
+        .panel-table {
             width: 100%;
             border-collapse: collapse;
             font-size: 13px;
             text-align: center;
-        }}
+        }
 
-        .panel-table th, .panel-table td {{
+        .panel-table th, .panel-table td {
             padding: 10px 4px;
             border-bottom: 1px solid #374151;
-        }}
+        }
 
-        .panel-table th {{
+        .panel-table th {
             background: #1f2937;
             color: #d1d5db;
             position: sticky;
             top: 0;
             z-index: 10;
             font-weight: 600;
-        }}
+        }
 
-        .panel-table tr:nth-child(even) {{ background-color: #111827; }}
-        .panel-table tr:nth-child(odd) {{ background-color: #1f2937; }}
-        .panel-table tr:hover {{ background-color: #374151; }}
+        .panel-table tr:nth-child(even) { background-color: #111827; }
+        .panel-table tr:nth-child(odd) { background-color: #1f2937; }
+        .panel-table tr:hover { background-color: #374151; }
 
-        .custom-overlay-card {{
+        .custom-overlay-card {
             cursor: pointer;
             padding: 6px 10px;
             background: white;
@@ -251,11 +251,11 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
             text-align: center;
             user-select: none;
             transition: transform 0.15s ease, border-color 0.15s ease;
-        }}
-        .custom-overlay-card:hover {{
+        }
+        .custom-overlay-card:hover {
             transform: scale(1.06);
             border-color: #2563eb;
-        }}
+        }
     </style>
 </head>
 <body>
@@ -292,38 +292,38 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
         var map, clusterer, markers = [], overlays = [];
         var allTradeData = [];
 
-        function sendToStreamlit(type, data) {{
-            var msg = Object.assign({{ isStreamlitMessage: true, type: type }}, data);
+        function sendToStreamlit(type, data) {
+            var msg = Object.assign({ isStreamlitMessage: true, type: type }, data);
             window.parent.postMessage(msg, "*");
-        }}
+        }
 
-        function closePanel() {{
+        function closePanel() {
             document.getElementById('detail-panel').classList.remove('open');
-        }}
+        }
 
-        function openPanel(aptName) {{
+        function openPanel(aptName) {
             var panel = document.getElementById('detail-panel');
             var title = document.getElementById('panel-title');
             var sub = document.getElementById('panel-sub');
             var tbody = document.getElementById('panel-table-body');
 
-            var trades = allTradeData.filter(function(d) {{ return d.apt_name === aptName; }});
+            var trades = allTradeData.filter(function(d) { return d.apt_name === aptName; });
 
-            if (trades.length === 0) {{
+            if (trades.length === 0) {
                 closePanel();
                 return;
-            }}
+            }
 
             title.innerText = aptName;
             
-            var sum = trades.reduce(function(acc, cur) {{ return acc + cur.price_raw; }}, 0);
+            var sum = trades.reduce(function(acc, cur) { return acc + cur.price_raw; }, 0);
             var avg = Math.round(sum / trades.length);
             var avgStr = formatKoreanPriceJS(avg);
 
             sub.innerHTML = '총 <b style="color:#60a5fa;">' + trades.length + '</b>건 | 평균 <b style="color:#f87171;">' + avgStr + '</b>';
 
             tbody.innerHTML = '';
-            trades.forEach(function(t, idx) {{
+            trades.forEach(function(t, idx) {
                 var tr = document.createElement('tr');
                 tr.innerHTML = '<td>' + (idx + 1) + '</td>' +
                                '<td>' + t.area + '㎡</td>' +
@@ -331,114 +331,112 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
                                '<td style="color:#f87171; font-weight:bold;">' + t.price_fmt + '</td>' +
                                '<td>' + t.deal_date + '</td>';
                 tbody.appendChild(tr);
-            }});
+            });
 
             panel.classList.add('open');
-        }}
+        }
 
-        function formatKoreanPriceJS(price) {{
+        function formatKoreanPriceJS(price) {
             if (!price || price <= 0) return '0만';
             var uk = Math.floor(price / 10000);
             var man = price % 10000;
             if (uk > 0 && man > 0) return uk.toLocaleString() + '억 ' + man.toLocaleString() + '만';
             if (uk > 0) return uk.toLocaleString() + '억';
             return man.toLocaleString() + '만';
-        }}
+        }
 
-        window.addEventListener("message", function(event) {{
-            if (event.data && event.data.type === "streamlit:render") {{
+        window.addEventListener("message", function(event) {
+            if (event.data && event.data.type === "streamlit:render") {
                 renderMap(event.data.args);
-            }}
-        }});
+            }
+        });
 
-        sendToStreamlit("streamlit:componentReady", {{ apiVersion: 1 }});
-        sendToStreamlit("streamlit:setFrameHeight", {{ height: 815 }});
+        sendToStreamlit("streamlit:componentReady", { apiVersion: 1 });
+        sendToStreamlit("streamlit:setFrameHeight", { height: 815 });
 
-        function renderMap(props) {{
+        function renderMap(props) {
             var centerLat = props.center_lat;
             var centerLng = props.center_lng;
             var aptSummary = props.apt_summary;
             allTradeData = props.all_trades || [];
 
-            if (typeof kakao === 'undefined' || !kakao.maps) {{
+            if (typeof kakao === 'undefined' || !kakao.maps) {
                 return;
-            }}
+            }
 
-            kakao.maps.load(function() {{
+            kakao.maps.load(function() {
                 var container = document.getElementById('map');
-                if (!map) {{
-                    map = new kakao.maps.Map(container, {{
+                if (!map) {
+                    map = new kakao.maps.Map(container, {
                         center: new kakao.maps.LatLng(centerLat, centerLng),
                         level: 3
-                    }});
-                }} else {{
+                    });
+                } else {
                     map.setCenter(new kakao.maps.LatLng(centerLat, centerLng));
                     map.setLevel(3);
-                }}
+                }
 
                 if (clusterer) clusterer.clear();
-                markers.forEach(function(m) {{ m.setMap(null); }});
+                markers.forEach(function(m) { m.setMap(null); });
                 markers = [];
-                overlays.forEach(function(o) {{ o.setMap(null); }});
+                overlays.forEach(function(o) { o.setMap(null); });
                 overlays = [];
 
-                clusterer = new kakao.maps.MarkerClusterer({{
+                clusterer = new kakao.maps.MarkerClusterer({
                     map: map,
                     averageCenter: true,
                     minLevel: 5
-                }});
+                });
 
-                if (aptSummary && aptSummary.length > 0) {{
-                    aptSummary.forEach(function(item) {{
+                if (aptSummary && aptSummary.length > 0) {
+                    aptSummary.forEach(function(item) {
                         var pos = new kakao.maps.LatLng(item.lat, item.lng);
-                        var marker = new kakao.maps.Marker({{ position: pos, clickable: true }});
+                        var marker = new kakao.maps.Marker({ position: pos, clickable: true });
 
-                        kakao.maps.event.addListener(marker, 'click', function() {{
+                        kakao.maps.event.addListener(marker, 'click', function() {
                             map.panTo(pos);
                             openPanel(item.apt_name);
-                        }});
+                        });
 
                         var div = document.createElement('div');
                         div.className = 'custom-overlay-card';
                         div.innerHTML = item.apt_name + '<br><span style="color:#e74c3c; font-size:13px;">평균 ' + item.avg_price_fmt + '</span> <span style="font-size:11px; color:#7f8c8d;">(' + item.count + '건)</span>';
 
-                        div.addEventListener('click', function(e) {{
+                        div.addEventListener('click', function(e) {
                             e.stopPropagation();
                             map.panTo(pos);
                             openPanel(item.apt_name);
-                        }});
+                        });
 
-                        var overlay = new kakao.maps.CustomOverlay({{
+                        var overlay = new kakao.maps.CustomOverlay({
                             position: pos, 
                             clickable: true, 
                             content: div, 
                             yAnchor: 2.2,
                             zIndex: 1
-                        }});
+                        });
 
-                        div.addEventListener('mouseenter', function() {{ overlay.setZIndex(999); }});
-                        div.addEventListener('mouseleave', function() {{ overlay.setZIndex(1); }});
+                        div.addEventListener('mouseenter', function() { overlay.setZIndex(999); });
+                        div.addEventListener('mouseleave', function() { overlay.setZIndex(1); });
 
                         overlay.setMap(map);
 
                         markers.push(marker);
                         overlays.push(overlay);
-                    }});
+                    });
 
                     clusterer.addMarkers(markers);
-                }}
+                }
                 closePanel();
-            }});
-        }}
+            });
+        }
     </script>
 </body>
 </html>
 """
 
-# 파일이 없는 경우 또는 새로 생성할 때만 1회 기록
-if not os.path.exists(INDEX_HTML_PATH):
-    with open(INDEX_HTML_PATH, "w", encoding="utf-8") as f:
-        f.write(INDEX_HTML_CONTENT)
+with open(INDEX_HTML_PATH, "w", encoding="utf-8") as f:
+    f.write(INDEX_HTML_CONTENT)
 
 kakao_map_component = components.declare_component("kakao_map_comp", path=MAP_DIR)
 
