@@ -121,8 +121,8 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
             box-sizing: border-box;
             margin-bottom: 12px;
         }
-        @-webkit-keyframes spin { 0% { -webkit-transform: rotate(0deg); } 100% { -webkit-transform: rotate(360deg); } }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        @-webkit-keyframes spin {{ 0% {{ -webkit-transform: rotate(0deg); }} 100% {{ -webkit-transform: rotate(360deg); }} }}
+        @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
         
         #detail-panel {{ position: absolute; top: 0; right: -430px; width: 410px; height: 100%; background: #111827; color: #f3f4f6; transition: right 0.3s; z-index: 800000; display: flex; flex-direction: column; border-left: 1px solid #374151; }}
         #detail-panel.open {{ right: 0; }}
