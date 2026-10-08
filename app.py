@@ -575,22 +575,18 @@ if candidates:
         filtered_df['통합물건명'] = filtered_df['coord_key'].map(rep_names)
 
         apt_grp = filtered_df.groupby('통합물건명').agg(평균매매가=('매매가(만원)', 'mean'), 거래건수=('매매가(만원)', 'count'), lat=('lat', 'first'), lng=('lng', 'first')).reset_index()
+        
+        target_lat, target_lng = selected_candidate['lat'], selected_candidate['lng']
+        apt_grp['target_dist'] = apt_grp.apply(
+            lambda r: haversine_distance(target_lat, target_lng, r['lat'], r['lng']), axis=1
+        )
 
-        target_place = selected_candidate.get('place_name', '').strip()
-        target_addr = selected_candidate.get('address', '').strip()
+        nearby = apt_grp[apt_grp['target_dist'] <= 0.2]
+        target_apt_name = nearby.sort_values(by='target_dist').iloc[0]['통합물건명'] if not nearby.empty else None
 
         for _, r in apt_grp.iterrows():
             item_apt_name = str(r['통합물건명']).strip()
-            
-            is_target = False
-            # 1. 장소명(건물명)이 실거래 물건명과 일치/포함되는 경우
-            if target_place and (target_place in item_apt_name or item_apt_name in target_place):
-                is_target = True
-            # 2. 주소 검색 시 (지번/동/도로명 키워드가 실거래 물건명에 포함되는 경우)
-            elif target_addr:
-                addr_keywords = [p for p in target_addr.split() if len(p) > 1]
-                if any(kw in item_apt_name for kw in addr_keywords[2:]):
-                    is_target = True
+            is_target = (target_apt_name is not None and item_apt_name == target_apt_name)
 
             apt_summary_list.append({
                 "apt_name": item_apt_name,
