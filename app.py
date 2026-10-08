@@ -38,11 +38,24 @@ def get_recent_months(n=12):
         months.append(f"{y:04d}{m:02d}")
     return months
 
+def format_region_display(region_list):
+    """수집 지역 명칭 간소화 (예: 경기도 고양시 일산동구 -> 일산동구)"""
+    cleaned = []
+    for r in region_list:
+        parts = r.split()
+        if len(parts) >= 3:
+            cleaned.append(parts[-1])
+        elif len(parts) == 2:
+            cleaned.append(parts[-1])
+        else:
+            cleaned.append(r)
+    return ", ".join(cleaned)
+
 st.set_page_config(page_title="부동산 실거래가 지도", layout="wide")
 
 st.markdown("""
 <style>
-    .info-banner-sidebar { background: #064e3b; border: 1px solid #10b981; border-radius: 8px; padding: 12px; margin-top: 15px; font-size: 13px; color: #ecfdf5; }
+    .info-banner-sidebar { background: #064e3b; border: 1px solid #10b981; border-radius: 8px; padding: 12px; margin-top: 15px; font-size: 13px; color: #ecfdf5; line-height: 1.6; }
     [data-testid="stSidebar"] { min-width: 350px !important; max-width: 500px !important; }
     [data-testid="stSidebarCollapseButton"], [data-testid="collapsedControl"], header[data-testid="stHeader"] { display: none !important; }
     .block-container { padding-top: 2.5rem !important; padding-bottom: 0 !important; }
@@ -58,7 +71,7 @@ except Exception:
     st.error("⚠️ Streamlit Secrets 키를 설정해주세요.")
 
 # -----------------------------------------------------------------------------
-# 1. 카카오 지도 컴포넌트 HTML 생성
+# 1. 카카오 지도 컴포넌트 HTML 생성 (중앙 오버레이 스피너 포함)
 # -----------------------------------------------------------------------------
 MAP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "kakao_map_comp"))
 os.makedirs(MAP_DIR, exist_ok=True)
@@ -73,6 +86,24 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
         html, body {{ width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; font-family: sans-serif; }}
         #map-container {{ position: relative; width: 100%; height: 800px; border-radius: 12px; overflow: hidden; border: 1px solid #374151; }}
         #map {{ width: 100%; height: 100%; }}
+        
+        /* 중앙 로딩 오버레이 스타일 */
+        #map-loader {{
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(17, 24, 39, 0.75); backdrop-filter: blur(2px);
+            z-index: 2000; display: flex; flex-direction: column;
+            justify-content: center; align-items: center; color: #ffffff;
+            transition: opacity 0.3s ease;
+        }}
+        .spinner {{
+            width: 48px; height: 48px;
+            border: 4px solid rgba(255, 255, 255, 0.15);
+            border-top: 4px solid #10b981;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }}
+        @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
+        
         #detail-panel {{ position: absolute; top: 0; right: -430px; width: 410px; height: 100%; background: #111827; color: #f3f4f6; transition: right 0.3s; z-index: 1000; display: flex; flex-direction: column; border-left: 1px solid #374151; }}
         #detail-panel.open {{ right: 0; }}
         .panel-header {{ padding: 16px; background: #1f2937; border-bottom: 1px solid #374151; display: flex; justify-content: space-between; }}
@@ -88,6 +119,12 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
 </head>
 <body>
     <div id="map-container">
+        <!-- 지도 중앙 로딩 스피너 오버레이 -->
+        <div id="map-loader">
+            <div class="spinner"></div>
+            <div style="margin-top: 16px; font-size: 15px; font-weight: 600; color: #f3f4f6;">해당 지역 실거래가 데이터를 수집 및 분석 중입니다...</div>
+        </div>
+
         <div id="map"></div>
         <div id="detail-panel">
             <div class="panel-header">
@@ -129,6 +166,9 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
         sendMsg("streamlit:setFrameHeight", {{ height: 815 }});
 
         function renderMap(props) {{
+            // 데이터 렌더링 시작 시 로더 숨김 처리
+            var loader = document.getElementById('map-loader');
+            
             kakao.maps.load(() => {{
                 var container = document.getElementById('map'), pos = new kakao.maps.LatLng(props.center_lat, props.center_lng);
                 if (!map) map = new kakao.maps.Map(container, {{ center: pos, level: 3 }});
@@ -150,6 +190,9 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
                 }});
                 clusterer.addMarkers(markers);
                 closePanel();
+
+                // 렌더링 완료 후 로딩 스피너 숨김
+                if (loader) loader.style.display = 'none';
             }});
         }}
     </script>
@@ -172,7 +215,8 @@ API_ENDPOINTS = {
     "토지": "http://apis.data.go.kr/1613000/RTMSDataSvcLandTrade/getRTMSDataSvcLandTrade"
 }
 
-def get_nearby_lawd_codes(lat, lng, radius_km=2.5):
+def get_nearby_lawd_codes(lat, lng, radius_km=1.5):
+    """1.5km 이내의 법정동 코드만 탐색하도록 반경 최적화"""
     headers = {"Authorization": f"KakaoAK {KAKAO_REST_KEY}"}
     lawd_info = {}
     offset = radius_km / 111.0
@@ -181,7 +225,7 @@ def get_nearby_lawd_codes(lat, lng, radius_km=2.5):
             res = requests.get(f"https://dapi.kakao.com/v2/local/geo/coord2regioncode.json?x={c_lng}&y={c_lat}", headers=headers, timeout=3).json()
             if res.get('documents'):
                 d = res['documents'][0]
-                lawd_info[d['code'][:5]] = f"{d.get('region_1depth_name','')} {d.get('region_2depth_name','')}".strip()
+                lawd_info[d['code'][:5]] = f"{d.get('region_1depth_name','')} {d.get('region_2depth_name','')} {d.get('region_3depth_name','')}".strip()
         except Exception: pass
     return lawd_info
 
@@ -223,7 +267,6 @@ def fetch_molit_single_task(lawd_cd, ymd, property_type):
                 if header_code and header_code not in ['00', '000']:
                     break
 
-                # totalCount 파싱하여 조기 종료 버그 수정
                 total_cnt_elem = root.find('.//totalCount') or root.find('.//body/totalCount')
                 total_count = int(total_cnt_elem.text) if total_cnt_elem is not None and total_cnt_elem.text.isdigit() else 0
 
@@ -274,7 +317,6 @@ def fetch_molit_single_task(lawd_cd, ymd, property_type):
                         "deal_date": f"{deal_year}-{deal_month}-{deal_day}"
                     })
                 
-                # 전체 건수와 비교하여 페이지네이션 정상 수행
                 if total_count > 0 and (page_no * 100) >= total_count:
                     break
                 if len(items) < 100:
@@ -292,16 +334,11 @@ def get_cached_apt_coord(region_name, umd_name, jibun, raw_apt_name):
     headers = {"Authorization": f"KakaoAK {KAKAO_REST_KEY}"}
     queries = []
     
-    # 1순위: 지번 주소 검색 (연립/다세대 정확도 향상)
     if umd_name and jibun:
         queries.append((f"{region_name} {umd_name} {jibun}", "address"))
         queries.append((f"{umd_name} {jibun}", "address"))
-    
-    # 2순위: 원본 건물명이 존재할 경우 키워드 검색
     if raw_apt_name and raw_apt_name.strip():
         queries.append((f"{region_name} {umd_name} {raw_apt_name}", "keyword"))
-        
-    # 3순위: 동 단위 주소 검색
     if umd_name:
         queries.append((f"{region_name} {umd_name}", "address"))
 
@@ -316,7 +353,7 @@ def get_cached_apt_coord(region_name, umd_name, jibun, raw_apt_name):
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_type, months_count):
-    lawd_info = get_nearby_lawd_codes(lat, lng)
+    lawd_info = get_nearby_lawd_codes(lat, lng, radius_km=1.5)
     if not lawd_info:
         return lat, lng, full_address, "", [], pd.DataFrame()
 
@@ -349,7 +386,6 @@ def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_ty
     valid_trades = []
     for t in raw_items:
         k = (t['umd_name'], t['jibun'], t['apt_name'], t.get('raw_apt_name', ''))
-        # 주소 검색 실패 시에도 데이터를 버리지 않고 예비 좌표(lat, lng) 적용하여 100% 데이터 유지
         if k in coord_cache:
             c_lat, c_lng, dist = coord_cache[k]
         else:
@@ -391,15 +427,18 @@ if candidates:
     prop_type = st.session_state.get("submitted_property_type", "아파트")
     months_opt = st.session_state.get("submitted_months", 12)
 
-    with st.spinner("🔄 해당 지역 실거래가 데이터를 수집 및 분석 중입니다..."):
-        lat, lng, full_address, _, region_list, filtered_df = fetch_real_estate_ultra_fast(
-            selected_candidate['lat'], selected_candidate['lng'], selected_candidate['address'], selected_candidate['place_name'], prop_type, months_opt
-        )
+    # 데이터 수집 진행
+    lat, lng, full_address, _, region_list, filtered_df = fetch_real_estate_ultra_fast(
+        selected_candidate['lat'], selected_candidate['lng'], selected_candidate['address'], selected_candidate['place_name'], prop_type, months_opt
+    )
+
+    # 정제된 간소화 수집 지역 명칭 생성
+    display_regions = format_region_display(region_list)
 
     st.sidebar.markdown(f"""
     <div class="info-banner-sidebar">
         📍 <b>선택 위치:</b> {full_address}<br>
-        🏛️ <b>수집 지역:</b> {', '.join(region_list)}<br>
+        🏛️ <b>수집 지역:</b> {display_regions}<br>
         📊 <b>최근 {months_opt//12}년 [{prop_type}]</b> 실거래 총 <b>{len(filtered_df):,}건</b>
     </div>
     """, unsafe_allow_html=True)
