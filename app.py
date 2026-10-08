@@ -43,7 +43,6 @@ def format_region_display(region_list):
 
 st.set_page_config(page_title="부동산 실거래가 지도", layout="wide")
 
-# 적응형(반응형) 반응 지도 및 사이드바 스타일 정의
 st.markdown("""
 <style>
     .info-banner-sidebar { 
@@ -60,7 +59,6 @@ st.markdown("""
     [data-testid="stSidebarCollapseButton"], [data-testid="collapsedControl"], header[data-testid="stHeader"] { display: none !important; }
     .block-container { padding-top: 0.5rem !important; padding-bottom: 0 !important; padding-left: 0.5rem !important; padding-right: 0.5rem !important; max-width: 100% !important; }
     
-    /* 브라우저 화면 높이에 맞게 지도 높이 자동 적응 */
     div[data-testid="stCustomComponentV1"],
     div[data-testid="stCustomComponentV1"] > iframe,
     iframe[title="kakao_map_comp.kakao_map_comp"] {
@@ -89,17 +87,17 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
-    <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={KAKAO_JS_KEY}&libraries=clusterer"></script>
+    <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={KAKAO_JS_KEY}&libraries=clusterer&autoload=false"></script>
     <style>
         html, body {{ width: 100%; height: 100vh; margin: 0; padding: 0; overflow: hidden; font-family: sans-serif; }}
         #map-container {{ position: relative; width: 100%; height: 100%; overflow: hidden; }}
-        #map-loader {{
+        #loading-overlay {{
             position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(17, 24, 39, 0.88); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
-            z-index: 999999; display: flex; flex-direction: column; justify-content: center; align-items: center;
-            color: #ffffff; opacity: 1; transition: opacity 0.2s ease; pointer-events: auto;
+            background: rgba(17, 24, 39, 0.85); z-index: 99999;
+            display: flex; justify-content: center; align-items: center;
+            color: #ffffff; font-size: 16px; font-weight: bold;
         }}
-        #detail-panel {{ position: absolute; top: 0; right: -430px; width: 410px; height: 100%; background: #111827; color: #f3f4f6; transition: right 0.3s; z-index: 800000; display: flex; flex-direction: column; border-left: 1px solid #374151; }}
+        #detail-panel {{ position: absolute; top: 0; right: -430px; width: 410px; height: 100%; background: #111827; color: #f3f4f6; transition: right 0.3s; z-index: 80000; display: flex; flex-direction: column; border-left: 1px solid #374151; }}
         #detail-panel.open {{ right: 0; }}
         .panel-header {{ padding: 16px; background: #1f2937; border-bottom: 1px solid #374151; display: flex; justify-content: space-between; }}
         .panel-title {{ font-size: 17px; font-weight: bold; color: #60a5fa; }}
@@ -112,30 +110,23 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
         .custom-overlay-card {{
             cursor: pointer; padding: 6px 10px; background: white; color: #2c3e50;
             border: 2px solid #e74c3c; border-radius: 10px; font-weight: bold; font-size: 12px;
-            box-shadow: 0 2px 6px rgba(0,0,0,0.25); text-align: center; transition: transform 0.1s ease;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.25); text-align: center;
         }}
-        .custom-overlay-card:hover {{ transform: scale(1.08); border-color: #2563eb; }}
         .custom-overlay-card.highlight-target {{
             background: #fef08a !important; border: 2.5px solid #d97706 !important;
-            color: #0f172a !important; box-shadow: 0 0 12px rgba(217, 119, 6, 0.6);
+            color: #0f172a !important;
         }}
     </style>
 </head>
 <body>
     <div id="map-container">
-        <div id="map-loader">
-            <svg width="50" height="50" viewBox="0 0 50 50" style="margin-bottom: 14px; display: block;">
-                <circle cx="25" cy="25" r="20" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="5"></circle>
-                <circle cx="25" cy="25" r="20" fill="none" stroke="#10b981" stroke-width="5" stroke-dasharray="31.4 94.2">
-                    <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="0.8s" repeatCount="indefinite"/>
-                </circle>
-            </svg>
-            <div id="loader-msg" style="font-size: 15px; font-weight: 700; color: #ffffff; text-align: center; padding: 0 20px;">
-                실거래 데이터를 불러오는 중입니다...
-            </div>
+        <!-- 검은색 로딩 막 및 문구 -->
+        <div id="loading-overlay">
+            ⏳ 데이터를 불러오는 중입니다...
         </div>
 
         <div id="map" style="width: 100%; height: 100%;"></div>
+
         <div id="detail-panel">
             <div class="panel-header">
                 <div><div id="panel-title" class="panel-title">물건 정보</div><div id="panel-sub" style="font-size:13px; color:#9ca3af;">거래 0건</div></div>
@@ -149,33 +140,12 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
             </div>
         </div>
     </div>
+
     <script>
         var map, clusterer, markers = [], overlays = [], allTradeData = [];
-        var isMapInitialized = false;
-        var currentSearchKey = "";
 
         function sendMsg(type, data) {{ window.parent.postMessage(Object.assign({{ isStreamlitMessage: true, type: type }}, data), "*"); }}
         function closePanel() {{ document.getElementById('detail-panel').classList.remove('open'); }}
-
-        function showLoader(msg) {{
-            var loader = document.getElementById('map-loader');
-            var loaderMsg = document.getElementById('loader-msg');
-            if (loaderMsg && msg) loaderMsg.innerText = msg;
-            if (loader) {{
-                loader.style.display = 'flex';
-                loader.style.opacity = '1';
-                loader.style.pointerEvents = 'auto';
-            }}
-        }}
-
-        function hideLoader() {{
-            var loader = document.getElementById('map-loader');
-            if (loader) {{
-                loader.style.opacity = '0';
-                loader.style.pointerEvents = 'none';
-                setTimeout(function() {{ loader.style.display = 'none'; }}, 200);
-            }}
-        }}
 
         function notifyHeight() {{
             var h = 850;
@@ -219,100 +189,75 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
         notifyHeight();
 
         function renderMap(props) {{
-            var searchKey = (props.search_address || "") + "_" + (props.center_lat) + "_" + (props.center_lng) + "_" + (props.all_trades ? props.all_trades.length : 0);
-            var isDataChanged = (currentSearchKey !== searchKey);
-
-            if (!isMapInitialized || isDataChanged) {{
-                var msg = props.search_address ? "[" + props.search_address + "] 인근 지역 실거래 데이터를 수집 중입니다..." : "실거래 데이터를 불러오는 중입니다...";
-                showLoader(msg);
-                currentSearchKey = searchKey;
-            }}
+            var loader = document.getElementById('loading-overlay');
+            if (loader) loader.style.display = 'flex';
 
             kakao.maps.load(function() {{
                 try {{
-                    var container = document.getElementById('map'), pos = new kakao.maps.LatLng(props.center_lat, props.center_lng);
+                    var container = document.getElementById('map');
+                    var pos = new kakao.maps.LatLng(props.center_lat, props.center_lng);
 
                     if (!map) {{
                         map = new kakao.maps.Map(container, {{ center: pos, level: 3 }});
                     }} else {{
+                        map.setCenter(pos);
+                        map.setLevel(3);
                         map.relayout();
                     }}
 
-                    if (!isMapInitialized || isDataChanged) {{
-                        map.setCenter(pos);
-                        map.setLevel(3);
+                    if (clusterer) clusterer.clear();
+                    markers.forEach(function(m) {{ m.setMap(null); }});
+                    overlays.forEach(function(o) {{ o.setMap(null); }});
+                    markers = [];
+                    overlays = [];
+                    allTradeData = props.all_trades || [];
 
-                        if (clusterer) clusterer.clear();
-                        markers.forEach(function(m) {{ m.setMap(null); }});
-                        overlays.forEach(function(o) {{ o.setMap(null); }});
-                        markers = []; overlays = []; allTradeData = props.all_trades || [];
+                    if (!clusterer) {{
+                        clusterer = new kakao.maps.MarkerClusterer({{ map: map, averageCenter: true, minLevel: 5 }});
+                    }}
 
-                        if (!clusterer) {{
-                            clusterer = new kakao.maps.MarkerClusterer({{ map: map, averageCenter: true, minLevel: 5 }});
-                        }}
+                    (props.apt_summary || []).forEach(function(item) {{
+                        var p = new kakao.maps.LatLng(item.lat, item.lng);
+                        var m = new kakao.maps.Marker({{ position: p, clickable: true }});
 
-                        (props.apt_summary || []).forEach(function(item) {{
-                            var p = new kakao.maps.LatLng(item.lat, item.lng);
-                            var initialZIndex = item.is_target ? 500 : 10;
-                            var m = new kakao.maps.Marker({{ position: p, clickable: true, zIndex: initialZIndex }});
+                        var div = document.createElement('div');
+                        div.className = 'custom-overlay-card' + (item.is_target ? ' highlight-target' : '');
+                        div.innerHTML = item.apt_name + '<br><span style="color:' + (item.is_target ? '#b45309' : '#e74c3c') + ';">평균 ' + item.avg_price_fmt + '</span> <span style="font-size:11px;color:#64748b;">(' + item.count + '건)</span>';
 
-                            var div = document.createElement('div');
-                            div.className = 'custom-overlay-card' + (item.is_target ? ' highlight-target' : '');
-                            div.innerHTML = item.apt_name + '<br><span style="color:' + (item.is_target ? '#b45309' : '#e74c3c') + ';">평균 ' + item.avg_price_fmt + '</span> <span style="font-size:11px;color:#64748b;">(' + item.count + '건)</span>';
-
-                            var o = new kakao.maps.CustomOverlay({{
-                                position: p,
-                                clickable: true,
-                                content: div,
-                                yAnchor: 2.2,
-                                zIndex: initialZIndex
-                            }});
-
-                            div.onmouseenter = function() {{
-                                o.setZIndex(99999);
-                                m.setZIndex(99999);
-                            }};
-                            div.onmouseleave = function() {{
-                                if (!div.classList.contains('active-card')) {{
-                                    o.setZIndex(initialZIndex);
-                                    m.setZIndex(initialZIndex);
-                                }}
-                            }};
-                            div.onclick = function(e) {{
-                                e.stopPropagation();
-                                overlays.forEach(function(ov, idx) {{ ov.setZIndex(props.apt_summary[idx].is_target ? 500 : 10); }});
-                                document.querySelectorAll('.custom-overlay-card').forEach(function(c) {{ c.classList.remove('active-card'); }});
-                                div.classList.add('active-card');
-                                o.setZIndex(100000);
-                                m.setZIndex(100000);
-                                map.panTo(p);
-                                openPanel(item.apt_name);
-                            }};
-
-                            kakao.maps.event.addListener(m, 'click', function() {{
-                                overlays.forEach(function(ov, idx) {{ ov.setZIndex(props.apt_summary[idx].is_target ? 500 : 10); }});
-                                o.setZIndex(100000);
-                                map.panTo(p);
-                                openPanel(item.apt_name);
-                            }});
-
-                            m.setMap(map);
-                            o.setMap(map);
-                            markers.push(m);
-                            overlays.push(o);
+                        var o = new kakao.maps.CustomOverlay({{
+                            position: p,
+                            clickable: true,
+                            content: div,
+                            yAnchor: 2.2,
+                            zIndex: item.is_target ? 500 : 10
                         }});
 
-                        if (clusterer && markers.length > 0) {{
-                            clusterer.addMarkers(markers);
-                        }}
-                        closePanel();
+                        div.onclick = function(e) {{
+                            e.stopPropagation();
+                            map.panTo(p);
+                            openPanel(item.apt_name);
+                        }};
+
+                        kakao.maps.event.addListener(m, 'click', function() {{
+                            map.panTo(p);
+                            openPanel(item.apt_name);
+                        }});
+
+                        m.setMap(map);
+                        o.setMap(map);
+                        markers.push(m);
+                        overlays.push(o);
+                    }});
+
+                    if (clusterer && markers.length > 0) {{
+                        clusterer.addMarkers(markers);
                     }}
+                    closePanel();
                 }} catch(e) {{
-                    console.error("Map render error:", e);
+                    console.error("Map Error:", e);
                 }} finally {{
-                    isMapInitialized = true;
+                    if (loader) loader.style.display = 'none';
                     notifyHeight();
-                    hideLoader();
                 }}
             }});
         }}
