@@ -59,19 +59,24 @@ st.markdown("""
         max-width: 500px !important;
     }
 
-    /* 1. Streamlit 상단 투명 헤더 바 완전 숨김 */
-    header[data-testid="stHeader"] {
-    background-color: transparent !important;
-    z-index: 9999 !important;
+    /* 1. 사이드바 접기(숨김) 화살표 버튼 완전 제거 */
+    [data-testid="stSidebarCollapseButton"],
+    [data-testid="collapsedControl"] {
+        display: none !important;
     }
 
-    /* 2. 메인 영역 상단 여백 충분히 확보 (잘림 방지) */
+    /* 2. Streamlit 상단 투명 헤더 바 완전 숨김 */
+    header[data-testid="stHeader"] {
+        display: none !important;
+    }
+
+    /* 3. 메인 영역 상단 여백 확보 */
     .block-container {
         padding-top: 3.5rem !important;
         padding-bottom: 0rem !important;
     }
 
-    /* 3. 로딩 스피너 화면 전체 오버레이 & 중앙 컴팩트 모달 박스 */
+    /* 4. 로딩 스피너 화면 전체 오버레이 & 중앙 컴팩트 모달 박스 */
     div[data-testid="stSpinner"] {
         position: fixed !important;
         top: 0 !important;
@@ -326,7 +331,7 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
             if (!price || price <= 0) return '0만';
             var uk = Math.floor(price / 10000);
             var man = price % 10000;
-            if (uk > 0 && man > 0) return uk.toLocaleString() + '억 ' + man.toLocaleString() + '만';
+            if (uk > 0 and man > 0) return uk.toLocaleString() + '억 ' + man.toLocaleString() + '만';
             if (uk > 0) return uk.toLocaleString() + '억';
             return man.toLocaleString() + '만';
         }
@@ -375,7 +380,6 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
                         var pos = new kakao.maps.LatLng(item.lat, item.lng);
                         var marker = new kakao.maps.Marker({ position: pos, clickable: true });
 
-                        // 클릭 시 마커 위치로 지도 이동 (panTo)
                         kakao.maps.event.addListener(marker, 'click', function() {
                             map.panTo(pos);
                             openPanel(item.apt_name);
@@ -385,7 +389,6 @@ INDEX_HTML_CONTENT = """<!DOCTYPE html>
                         div.className = 'custom-overlay-card';
                         div.innerHTML = item.apt_name + '<br><span style="color:#e74c3c; font-size:13px;">평균 ' + item.avg_price_fmt + '</span> <span style="font-size:11px; color:#7f8c8d;">(' + item.count + '건)</span>';
 
-                        // 클릭 시 커스텀 카드 위치로 지도 이동 (panTo)
                         div.addEventListener('click', function(e) {
                             e.stopPropagation();
                             map.panTo(pos);
@@ -427,9 +430,10 @@ kakao_map_component = components.declare_component("kakao_map_comp", path=MAP_DI
 # -----------------------------------------------------------------------------
 # 3. 데이터 처리 및 API 함수
 # -----------------------------------------------------------------------------
+# 연립/다세대 API 엔드포인트 URL 표준화 수정
 API_ENDPOINTS = {
     "아파트": "http://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev",
-    "연립/다세대": "http://apis.data.go.kr/1613000/RTMSDataSvcRHTradeDev/getRTMSDataSvcRHTradeDev",
+    "연립/다세대": "http://apis.data.go.kr/1613000/RTMSDataSvcRHTrade/getRTMSDataSvcRHTrade",
     "단독/다가구": "http://apis.data.go.kr/1613000/RTMSDataSvcSHTrade/getRTMSDataSvcSHTrade",
     "오피스텔": "http://apis.data.go.kr/1613000/RTMSDataSvcOffiTrade/getRTMSDataSvcOffiTrade",
     "토지": "http://apis.data.go.kr/1613000/RTMSDataSvcLandTrade/getRTMSDataSvcLandTrade"
@@ -723,7 +727,7 @@ def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_ty
 # 5. 사이드바 UI 및 로직
 # -----------------------------------------------------------------------------
 st.sidebar.markdown(
-    "<h3 style='font-size: 20px; font-weight: bold; margin-bottom: 0px;'>🏢 한국자산관리아카데미</h3>", 
+    "<h3 style='font-size: 30px; font-weight: bold; margin-bottom: 0px;'>🏢 한국자산관리아카데미</h3>", 
     unsafe_allow_html=True
 )
 st.sidebar.title("📍 주소 및 조건")
@@ -762,7 +766,7 @@ with st.sidebar.form(key="search_form"):
     search_button = st.form_submit_button("🔍 위치 검색", use_container_width=True)
 
 if "candidates" not in st.session_state:
-    with st.spinner("위치를 검색하고 있습니다..."):
+    with st.spinner("🔍 위치를 검색하고 있습니다..."):
         initial_cands = search_location_candidates("호수로 688")
     st.session_state["candidates"] = initial_cands
     st.session_state["selected_candidate_idx"] = 0
@@ -770,7 +774,7 @@ if "candidates" not in st.session_state:
     st.session_state["submitted_months"] = 12
 
 if search_button:
-    with st.spinner("위치를 검색하고 있습니다..."):
+    with st.spinner("🔍 위치를 검색하고 있습니다..."):
         new_cands = search_location_candidates(search_query_input)
     st.session_state["candidates"] = new_cands
     st.session_state["selected_candidate_idx"] = 0
@@ -807,6 +811,7 @@ if selected_candidate:
     months_opt = st.session_state.get("submitted_months", 12)
     period_str = f"최근 {months_opt//12}년"
 
+    # 스피너 안내 문구 적용
     with st.spinner("🔄 해당 지역 실거래가 데이터 수집 및 위치 좌표 변환 중입니다.\n위치/유형 등에 따라 시간이 다소 소요될 수 있습니다..."):
         lat, lng, full_address, lawd_cd, region_list, filtered_df = fetch_real_estate_ultra_fast(
             selected_candidate['lat'],
