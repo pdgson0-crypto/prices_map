@@ -79,7 +79,7 @@ except Exception:
     st.error("⚠️ Streamlit Secrets 키를 설정해주세요.")
 
 # -----------------------------------------------------------------------------
-# 1. 카카오 지도 컴포넌트 (창 크기 조절 시 로딩 스피너 미노출 적용)
+# 1. 카카오 지도 컴포넌트
 # -----------------------------------------------------------------------------
 MAP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "kakao_map_comp"))
 os.makedirs(MAP_DIR, exist_ok=True)
@@ -92,30 +92,13 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
     <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={KAKAO_JS_KEY}&libraries=clusterer"></script>
     <style>
         html, body {{ width: 100%; height: 100vh; margin: 0; padding: 0; overflow: hidden; font-family: sans-serif; }}
-        #map-container {{
-            position: relative;
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-        }}
+        #map-container {{ position: relative; width: 100%; height: 100%; overflow: hidden; }}
         #map-loader {{
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: rgba(17, 24, 39, 0.85);
-            backdrop-filter: blur(4px);
-            -webkit-backdrop-filter: blur(4px);
-            z-index: 99999;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            color: #ffffff;
-            transition: opacity 0.2s ease;
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(17, 24, 39, 0.88); backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+            z-index: 999999; display: flex; flex-direction: column; justify-content: center; align-items: center;
+            color: #ffffff; opacity: 1; transition: opacity 0.2s ease; pointer-events: auto;
         }}
-        
         #detail-panel {{ position: absolute; top: 0; right: -430px; width: 410px; height: 100%; background: #111827; color: #f3f4f6; transition: right 0.3s; z-index: 800000; display: flex; flex-direction: column; border-left: 1px solid #374151; }}
         #detail-panel.open {{ right: 0; }}
         .panel-header {{ padding: 16px; background: #1f2937; border-bottom: 1px solid #374151; display: flex; justify-content: space-between; }}
@@ -126,35 +109,33 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
         .panel-table {{ width: 100%; border-collapse: collapse; font-size: 13px; text-align: center; }}
         .panel-table th, .panel-table td {{ padding: 10px 4px; border-bottom: 1px solid #374151; }}
         .panel-table th {{ background: #1f2937; color: #d1d5db; position: sticky; top: 0; }}
-        
-        .custom-overlay-card {{ 
-            cursor: pointer; padding: 6px 10px; background: white; color: #2c3e50; 
-            border: 2px solid #e74c3c; border-radius: 10px; font-weight: bold; font-size: 12px; 
+        .custom-overlay-card {{
+            cursor: pointer; padding: 6px 10px; background: white; color: #2c3e50;
+            border: 2px solid #e74c3c; border-radius: 10px; font-weight: bold; font-size: 12px;
             box-shadow: 0 2px 6px rgba(0,0,0,0.25); text-align: center; transition: transform 0.1s ease;
         }}
         .custom-overlay-card:hover {{ transform: scale(1.08); border-color: #2563eb; }}
-        
         .custom-overlay-card.highlight-target {{
-            background: #fef08a !important;
-            border: 2.5px solid #d97706 !important;
-            color: #0f172a !important;
-            box-shadow: 0 0 12px rgba(217, 119, 6, 0.6);
+            background: #fef08a !important; border: 2.5px solid #d97706 !important;
+            color: #0f172a !important; box-shadow: 0 0 12px rgba(217, 119, 6, 0.6);
         }}
     </style>
 </head>
 <body>
     <div id="map-container">
         <div id="map-loader">
-            <div style="width: 44px; height: 44px; border: 4px solid rgba(255,255,255,0.2); border-top-color: #10b981; border-radius: 50%; animation: spin 0.8s linear infinite; margin-bottom: 12px;"></div>
-            <style>
-                @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
-            </style>
-            <div id="loader-msg" style="font-size: 14px; font-weight: 600; color: #f3f4f6; text-align: center; padding: 0 20px;">
+            <svg width="50" height="50" viewBox="0 0 50 50" style="margin-bottom: 14px; display: block;">
+                <circle cx="25" cy="25" r="20" fill="none" stroke="rgba(255,255,255,0.2)" stroke-width="5"></circle>
+                <circle cx="25" cy="25" r="20" fill="none" stroke="#10b981" stroke-width="5" stroke-dasharray="31.4 94.2">
+                    <animateTransform attributeName="transform" type="rotate" from="0 25 25" to="360 25 25" dur="0.8s" repeatCount="indefinite"/>
+                </circle>
+            </svg>
+            <div id="loader-msg" style="font-size: 15px; font-weight: 700; color: #ffffff; text-align: center; padding: 0 20px;">
                 실거래 데이터를 불러오는 중입니다...
             </div>
         </div>
 
-        <div id="map"></div>
+        <div id="map" style="width: 100%; height: 100%;"></div>
         <div id="detail-panel">
             <div class="panel-header">
                 <div><div id="panel-title" class="panel-title">물건 정보</div><div id="panel-sub" style="font-size:13px; color:#9ca3af;">거래 0건</div></div>
@@ -175,7 +156,18 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
 
         function sendMsg(type, data) {{ window.parent.postMessage(Object.assign({{ isStreamlitMessage: true, type: type }}, data), "*"); }}
         function closePanel() {{ document.getElementById('detail-panel').classList.remove('open'); }}
-        
+
+        function showLoader(msg) {{
+            var loader = document.getElementById('map-loader');
+            var loaderMsg = document.getElementById('loader-msg');
+            if (loaderMsg && msg) loaderMsg.innerText = msg;
+            if (loader) {{
+                loader.style.display = 'flex';
+                loader.style.opacity = '1';
+                loader.style.pointerEvents = 'auto';
+            }}
+        }}
+
         function hideLoader() {{
             var loader = document.getElementById('map-loader');
             if (loader) {{
@@ -203,14 +195,14 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
         window.addEventListener("resize", notifyHeight);
 
         function openPanel(aptName) {{
-            var panel = document.getElementById('detail-panel'), trades = allTradeData.filter(d => d.apt_name === aptName);
+            var panel = document.getElementById('detail-panel'), trades = allTradeData.filter(function(d) {{ return d.apt_name === aptName; }});
             if (!trades.length) return closePanel();
             document.getElementById('panel-title').innerText = aptName;
-            var sum = trades.reduce((a, b) => a + b.price_raw, 0), avg = Math.round(sum / trades.length);
+            var sum = trades.reduce(function(a, b) {{ return a + b.price_raw; }}, 0), avg = Math.round(sum / trades.length);
             document.getElementById('panel-sub').innerHTML = '총 <b style="color:#60a5fa;">' + trades.length + '</b>건 | 평균 <b style="color:#f87171;">' + formatPrice(avg) + '</b>';
             var tbody = document.getElementById('panel-table-body');
             tbody.innerHTML = '';
-            trades.forEach((t, i) => {{
+            trades.forEach(function(t, i) {{
                 tbody.innerHTML += '<tr><td>' + (i+1) + '</td><td>' + t.area + '㎡</td><td>' + t.floor + '</td><td style="color:#f87171;font-weight:bold;">' + t.price_fmt + '</td><td>' + t.deal_date + '</td></tr>';
             }});
             panel.classList.add('open');
@@ -222,7 +214,7 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
             return (u > 0 ? u.toLocaleString() + '억 ' : '') + (m > 0 || u === 0 ? m.toLocaleString() + '만' : '');
         }}
 
-        window.addEventListener("message", e => {{ if (e.data && e.data.type === "streamlit:render") renderMap(e.data.args); }});
+        window.addEventListener("message", function(e) {{ if (e.data && e.data.type === "streamlit:render") renderMap(e.data.args); }});
         sendMsg("streamlit:componentReady", {{ apiVersion: 1 }});
         notifyHeight();
 
@@ -230,102 +222,98 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
             var searchKey = (props.search_address || "") + "_" + (props.center_lat) + "_" + (props.center_lng) + "_" + (props.all_trades ? props.all_trades.length : 0);
             var isDataChanged = (currentSearchKey !== searchKey);
 
-            var loader = document.getElementById('map-loader');
-            var loaderMsg = document.getElementById('loader-msg');
-            
-            // 데이터가 변경되었거나 최초 로드 시에만 로더 노출
             if (!isMapInitialized || isDataChanged) {{
-                if (loaderMsg && props.search_address) {{
-                    loaderMsg.innerText = "[" + props.search_address + "] 인근 지역 실거래 데이터를 수집 중입니다...";
-                }}
-                if (loader) loader.style.display = 'flex';
+                var msg = props.search_address ? "[" + props.search_address + "] 인근 지역 실거래 데이터를 수집 중입니다..." : "실거래 데이터를 불러오는 중입니다...";
+                showLoader(msg);
                 currentSearchKey = searchKey;
             }}
 
-            kakao.maps.load(() => {{
-                var container = document.getElementById('map'), pos = new kakao.maps.LatLng(props.center_lat, props.center_lng);
-                
-                if (!map) {{
-                    map = new kakao.maps.Map(container, {{ center: pos, level: 3 }});
-                }} else {{
-                    map.relayout();
-                }}
-                
-                // 데이터가 변경된 경우에만 마커 재생성 및 중심 이동
-                if (!isMapInitialized || isDataChanged) {{
-                    map.setCenter(pos);
-                    map.setLevel(3);
+            kakao.maps.load(function() {{
+                try {{
+                    var container = document.getElementById('map'), pos = new kakao.maps.LatLng(props.center_lat, props.center_lng);
 
-                    if (clusterer) clusterer.clear();
-                    markers.forEach(m => m.setMap(null)); 
-                    overlays.forEach(o => o.setMap(null));
-                    markers = []; overlays = []; allTradeData = props.all_trades || [];
-                    
-                    if (!clusterer) {{
-                        clusterer = new kakao.maps.MarkerClusterer({{ map: map, averageCenter: true, minLevel: 5 }});
+                    if (!map) {{
+                        map = new kakao.maps.Map(container, {{ center: pos, level: 3 }});
+                    }} else {{
+                        map.relayout();
                     }}
 
-                    (props.apt_summary || []).forEach((item) => {{
-                        var p = new kakao.maps.LatLng(item.lat, item.lng);
-                        var initialZIndex = item.is_target ? 500 : 10;
-                        var m = new kakao.maps.Marker({{ position: p, clickable: true, zIndex: initialZIndex }});
-                        
-                        var div = document.createElement('div');
-                        div.className = 'custom-overlay-card' + (item.is_target ? ' highlight-target' : '');
-                        div.innerHTML = item.apt_name + '<br><span style="color:' + (item.is_target ? '#b45309' : '#e74c3c') + ';">평균 ' + item.avg_price_fmt + '</span> <span style="font-size:11px;color:#64748b;">(' + item.count + '건)</span>';
-                        
-                        var o = new kakao.maps.CustomOverlay({{
-                            position: p,
-                            clickable: true,
-                            content: div,
-                            yAnchor: 2.2,
-                            zIndex: initialZIndex
+                    if (!isMapInitialized || isDataChanged) {{
+                        map.setCenter(pos);
+                        map.setLevel(3);
+
+                        if (clusterer) clusterer.clear();
+                        markers.forEach(function(m) {{ m.setMap(null); }});
+                        overlays.forEach(function(o) {{ o.setMap(null); }});
+                        markers = []; overlays = []; allTradeData = props.all_trades || [];
+
+                        if (!clusterer) {{
+                            clusterer = new kakao.maps.MarkerClusterer({{ map: map, averageCenter: true, minLevel: 5 }});
+                        }}
+
+                        (props.apt_summary || []).forEach(function(item) {{
+                            var p = new kakao.maps.LatLng(item.lat, item.lng);
+                            var initialZIndex = item.is_target ? 500 : 10;
+                            var m = new kakao.maps.Marker({{ position: p, clickable: true, zIndex: initialZIndex }});
+
+                            var div = document.createElement('div');
+                            div.className = 'custom-overlay-card' + (item.is_target ? ' highlight-target' : '');
+                            div.innerHTML = item.apt_name + '<br><span style="color:' + (item.is_target ? '#b45309' : '#e74c3c') + ';">평균 ' + item.avg_price_fmt + '</span> <span style="font-size:11px;color:#64748b;">(' + item.count + '건)</span>';
+
+                            var o = new kakao.maps.CustomOverlay({{
+                                position: p,
+                                clickable: true,
+                                content: div,
+                                yAnchor: 2.2,
+                                zIndex: initialZIndex
+                            }});
+
+                            div.onmouseenter = function() {{
+                                o.setZIndex(99999);
+                                m.setZIndex(99999);
+                            }};
+                            div.onmouseleave = function() {{
+                                if (!div.classList.contains('active-card')) {{
+                                    o.setZIndex(initialZIndex);
+                                    m.setZIndex(initialZIndex);
+                                }}
+                            }};
+                            div.onclick = function(e) {{
+                                e.stopPropagation();
+                                overlays.forEach(function(ov, idx) {{ ov.setZIndex(props.apt_summary[idx].is_target ? 500 : 10); }});
+                                document.querySelectorAll('.custom-overlay-card').forEach(function(c) {{ c.classList.remove('active-card'); }});
+                                div.classList.add('active-card');
+                                o.setZIndex(100000);
+                                m.setZIndex(100000);
+                                map.panTo(p);
+                                openPanel(item.apt_name);
+                            }};
+
+                            kakao.maps.event.addListener(m, 'click', function() {{
+                                overlays.forEach(function(ov, idx) {{ ov.setZIndex(props.apt_summary[idx].is_target ? 500 : 10); }});
+                                o.setZIndex(100000);
+                                map.panTo(p);
+                                openPanel(item.apt_name);
+                            }});
+
+                            m.setMap(map);
+                            o.setMap(map);
+                            markers.push(m);
+                            overlays.push(o);
                         }});
 
-                        div.onmouseenter = function() {{
-                            o.setZIndex(99999);
-                            m.setZIndex(99999);
-                        }};
-                        div.onmouseleave = function() {{
-                            if (!div.classList.contains('active-card')) {{
-                                o.setZIndex(initialZIndex);
-                                m.setZIndex(initialZIndex);
-                            }}
-                        }};
-                        div.onclick = function(e) {{
-                            e.stopPropagation();
-                            overlays.forEach((ov, idx) => {{ ov.setZIndex(props.apt_summary[idx].is_target ? 500 : 10); }});
-                            document.querySelectorAll('.custom-overlay-card').forEach(c => c.classList.remove('active-card'));
-                            div.classList.add('active-card');
-                            o.setZIndex(100000);
-                            m.setZIndex(100000);
-                            map.panTo(p);
-                            openPanel(item.apt_name);
-                        }};
-
-                        kakao.maps.event.addListener(m, 'click', function() {{
-                            overlays.forEach((ov, idx) => {{ ov.setZIndex(props.apt_summary[idx].is_target ? 500 : 10); }});
-                            o.setZIndex(100000);
-                            map.panTo(p);
-                            openPanel(item.apt_name);
-                        }});
-
-                        m.setMap(map);
-                        o.setMap(map);
-                        markers.push(m);
-                        overlays.push(o);
-                    }});
-                    
-                    try {{
-                        clusterer.addMarkers(markers);
+                        if (clusterer && markers.length > 0) {{
+                            clusterer.addMarkers(markers);
+                        }}
                         closePanel();
-                    }} catch(e) {{
-                        console.error(e);
-                    }} finally {{
-                        isMapInitialized = true;
-                        notifyHeight();
-                        hideLoader();
                     }}
+                }} catch(e) {{
+                    console.error("Map render error:", e);
+                }} finally {{
+                    isMapInitialized = true;
+                    notifyHeight();
+                    hideLoader();
+                }}
             }});
         }}
     </script>
