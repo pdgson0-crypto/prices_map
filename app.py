@@ -79,7 +79,7 @@ except Exception:
     st.error("⚠️ Streamlit Secrets 키를 설정해주세요.")
 
 # -----------------------------------------------------------------------------
-# 1. 카카오 지도 컴포넌트 (완전 적응형 높이 지원)
+# 1. 카카오 지도 컴포넌트 (창 크기 조절 시 로딩 스피너 미노출 적용)
 # -----------------------------------------------------------------------------
 MAP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "kakao_map_comp"))
 os.makedirs(MAP_DIR, exist_ok=True)
@@ -137,7 +137,6 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
         }}
         .custom-overlay-card:hover {{ transform: scale(1.08); border-color: #2563eb; }}
         
-        /* 일치 물건 하이라이트 (노란색 배경) */
         .custom-overlay-card.highlight-target {{
             background: #fef08a !important;
             border: 2.5px solid #d97706 !important;
@@ -171,6 +170,9 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
     </div>
     <script>
         var map, clusterer, markers = [], overlays = [], allTradeData = [];
+        var isMapInitialized = false;
+        var currentSearchKey = "";
+
         function sendMsg(type, data) {{ window.parent.postMessage(Object.assign({{ isStreamlitMessage: true, type: type }}, data), "*"); }}
         function closePanel() {{ document.getElementById('detail-panel').classList.remove('open'); }}
         
@@ -221,81 +223,102 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
         notifyHeight();
 
         function renderMap(props) {{
+            var searchKey = (props.search_address || "") + "_" + (props.center_lat) + "_" + (props.center_lng) + "_" + (props.all_trades ? props.all_trades.length : 0);
+            var isDataChanged = (currentSearchKey !== searchKey);
+
             var loader = document.getElementById('map-loader');
             var loaderMsg = document.getElementById('loader-msg');
             
-            if (loaderMsg && props.search_address) {{
-                loaderMsg.innerText = "[" + props.search_address + "] 인근 지역 실거래 데이터를 수집 중입니다...";
+            // 데이터가 변경되었거나 최초 로드 시에만 로더 노출
+            if (!isMapInitialized || isDataChanged) {{
+                if (loaderMsg && props.search_address) {{
+                    loaderMsg.innerText = "[" + props.search_address + "] 인근 지역 실거래 데이터를 수집 중입니다...";
+                }}
+                if (loader) loader.style.display = 'flex';
+                currentSearchKey = searchKey;
             }}
-            if (loader) loader.style.display = 'flex';
 
             kakao.maps.load(() => {{
                 var container = document.getElementById('map'), pos = new kakao.maps.LatLng(props.center_lat, props.center_lng);
-                if (!map) map = new kakao.maps.Map(container, {{ center: pos, level: 3 }});
-                else {{ map.setCenter(pos); map.setLevel(3); }}
                 
-                if (clusterer) clusterer.clear();
-                markers.forEach(m => m.setMap(null)); 
-                overlays.forEach(o => o.setMap(null));
-                markers = []; overlays = []; allTradeData = props.all_trades || [];
+                if (!map) {{
+                    map = new kakao.maps.Map(container, {{ center: pos, level: 3 }});
+                }} else {{
+                    map.relayout();
+                }}
                 
-                clusterer = new kakao.maps.MarkerClusterer({{ map: map, averageCenter: true, minLevel: 5 }});
+                // 데이터가 변경된 경우에만 마커 재생성 및 중심 이동
+                if (!isMapInitialized || isDataChanged) {{
+                    map.setCenter(pos);
+                    map.setLevel(3);
 
-                (props.apt_summary || []).forEach((item) => {{
-                    var p = new kakao.maps.LatLng(item.lat, item.lng);
-                    var initialZIndex = item.is_target ? 500 : 10;
-                    var m = new kakao.maps.Marker({{ position: p, clickable: true, zIndex: initialZIndex }});
+                    if (clusterer) clusterer.clear();
+                    markers.forEach(m => m.setMap(null)); 
+                    overlays.forEach(o => o.setMap(null));
+                    markers = []; overlays = []; allTradeData = props.all_trades || [];
                     
-                    var div = document.createElement('div');
-                    div.className = 'custom-overlay-card' + (item.is_target ? ' highlight-target' : '');
-                    div.innerHTML = item.apt_name + '<br><span style="color:' + (item.is_target ? '#b45309' : '#e74c3c') + ';">평균 ' + item.avg_price_fmt + '</span> <span style="font-size:11px;color:#64748b;">(' + item.count + '건)</span>';
+                    if (!clusterer) {{
+                        clusterer = new kakao.maps.MarkerClusterer({{ map: map, averageCenter: true, minLevel: 5 }});
+                    }}
+
+                    (props.apt_summary || []).forEach((item) => {{
+                        var p = new kakao.maps.LatLng(item.lat, item.lng);
+                        var initialZIndex = item.is_target ? 500 : 10;
+                        var m = new kakao.maps.Marker({{ position: p, clickable: true, zIndex: initialZIndex }});
+                        
+                        var div = document.createElement('div');
+                        div.className = 'custom-overlay-card' + (item.is_target ? ' highlight-target' : '');
+                        div.innerHTML = item.apt_name + '<br><span style="color:' + (item.is_target ? '#b45309' : '#e74c3c') + ';">평균 ' + item.avg_price_fmt + '</span> <span style="font-size:11px;color:#64748b;">(' + item.count + '건)</span>';
+                        
+                        var o = new kakao.maps.CustomOverlay({{
+                            position: p,
+                            clickable: true,
+                            content: div,
+                            yAnchor: 2.2,
+                            zIndex: initialZIndex
+                        }});
+
+                        div.onmouseenter = function() {{
+                            o.setZIndex(99999);
+                            m.setZIndex(99999);
+                        }};
+                        div.onmouseleave = function() {{
+                            if (!div.classList.contains('active-card')) {{
+                                o.setZIndex(initialZIndex);
+                                m.setZIndex(initialZIndex);
+                            }}
+                        }};
+                        div.onclick = function(e) {{
+                            e.stopPropagation();
+                            overlays.forEach((ov, idx) => {{ ov.setZIndex(props.apt_summary[idx].is_target ? 500 : 10); }});
+                            document.querySelectorAll('.custom-overlay-card').forEach(c => c.classList.remove('active-card'));
+                            div.classList.add('active-card');
+                            o.setZIndex(100000);
+                            m.setZIndex(100000);
+                            map.panTo(p);
+                            openPanel(item.apt_name);
+                        }};
+
+                        kakao.maps.event.addListener(m, 'click', function() {{
+                            overlays.forEach((ov, idx) => {{ ov.setZIndex(props.apt_summary[idx].is_target ? 500 : 10); }});
+                            o.setZIndex(100000);
+                            map.panTo(p);
+                            openPanel(item.apt_name);
+                        }});
+
+                        m.setMap(map);
+                        o.setMap(map);
+                        markers.push(m);
+                        overlays.push(o);
+                    }});
                     
-                    var o = new kakao.maps.CustomOverlay({{
-                        position: p,
-                        clickable: true,
-                        content: div,
-                        yAnchor: 2.2,
-                        zIndex: initialZIndex
-                    }});
+                    clusterer.addMarkers(markers);
+                    closePanel();
+                }}
 
-                    div.onmouseenter = function() {{
-                        o.setZIndex(99999);
-                        m.setZIndex(99999);
-                    }};
-                    div.onmouseleave = function() {{
-                        if (!div.classList.contains('active-card')) {{
-                            o.setZIndex(initialZIndex);
-                            m.setZIndex(initialZIndex);
-                        }}
-                    }};
-                    div.onclick = function(e) {{
-                        e.stopPropagation();
-                        overlays.forEach((ov, idx) => {{ ov.setZIndex(props.apt_summary[idx].is_target ? 500 : 10); }});
-                        document.querySelectorAll('.custom-overlay-card').forEach(c => c.classList.remove('active-card'));
-                        div.classList.add('active-card');
-                        o.setZIndex(100000);
-                        m.setZIndex(100000);
-                        map.panTo(p);
-                        openPanel(item.apt_name);
-                    }};
-
-                    kakao.maps.event.addListener(m, 'click', function() {{
-                        overlays.forEach((ov, idx) => {{ ov.setZIndex(props.apt_summary[idx].is_target ? 500 : 10); }});
-                        o.setZIndex(100000);
-                        map.panTo(p);
-                        openPanel(item.apt_name);
-                    }});
-
-                    m.setMap(map);
-                    o.setMap(map);
-                    markers.push(m);
-                    overlays.push(o);
-                }});
-                
-                clusterer.addMarkers(markers);
-                closePanel();
+                isMapInitialized = true;
                 notifyHeight();
-                setTimeout(hideLoader, 300);
+                setTimeout(hideLoader, 200);
             }});
         }}
     </script>
@@ -308,7 +331,7 @@ with open(INDEX_HTML_PATH, "w", encoding="utf-8") as f:
 kakao_map_component = components.declare_component("kakao_map_comp", path=MAP_DIR)
 
 # -----------------------------------------------------------------------------
-# 2. 데이터 수집 및 좌표 변환 (구 단위 수집 정보 적용)
+# 2. 데이터 수집 및 좌표 변환
 # -----------------------------------------------------------------------------
 API_ENDPOINTS = {
     "아파트": "http://apis.data.go.kr/1613000/RTMSDataSvcAptTradeDev/getRTMSDataSvcAptTradeDev",
@@ -534,8 +557,8 @@ if candidates:
     )
 
     display_regions = format_region_display(region_list)
-    
     region_bullets_html = "".join([f"<div style='margin-left: 10px;'>• {r}</div>" for r in display_regions])
+
     st.sidebar.markdown(f"""
     <div class="info-banner-sidebar">
         📍 <b>검색 위치 :</b> {full_address}<br>
@@ -553,14 +576,18 @@ if candidates:
 
         apt_grp = filtered_df.groupby('통합물건명').agg(평균매매가=('매매가(만원)', 'mean'), 거래건수=('매매가(만원)', 'count'), lat=('lat', 'first'), lng=('lng', 'first')).reset_index()
 
-        target_name = selected_candidate.get('place_name', '').strip()
+target_place = selected_candidate.get('place_name', '').strip()
+        target_addr = selected_candidate.get('address', '').strip()
 
         for _, r in apt_grp.iterrows():
             item_apt_name = str(r['통합물건명']).strip()
             
             is_target = False
-            if target_name and target_name != selected_candidate.get('address', '').strip():
-                if target_name in item_apt_name or item_apt_name in target_name:
+            if target_place and (target_place in item_apt_name or item_apt_name in target_place):
+                is_target = True
+            elif target_addr:
+                addr_keywords = [p for p in target_addr.split() if len(p) > 1]
+                if any(kw in item_apt_name for kw in addr_keywords[2:]):
                     is_target = True
 
             apt_summary_list.append({
@@ -575,7 +602,6 @@ if candidates:
         for _, r in filtered_df.iterrows():
             trade_list.append({"apt_name": str(r['통합물건명']), "area": f"{float(r['면적(㎡)']):.1f}", "floor": str(r['층수']), "price_raw": int(r['매매가(만원)']), "price_fmt": format_korean_price(r['매매가(만원)']), "deal_date": str(r['계약일'])})
 
-    # 지도 컴포넌트 호출
     kakao_map_component(
         key="kakao_map_comp",
         center_lat=lat,
