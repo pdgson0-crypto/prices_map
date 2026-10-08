@@ -70,7 +70,7 @@ except Exception:
     st.error("⚠️ Streamlit Secrets 키를 설정해주세요.")
 
 # -----------------------------------------------------------------------------
-# 1. 카카오 지도 컴포넌트 (마커 최상단 올려주기 zIndex 기능 복구)
+# 1. 카카오 지도 컴포넌트
 # -----------------------------------------------------------------------------
 MAP_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "kakao_map_comp"))
 os.makedirs(MAP_DIR, exist_ok=True)
@@ -208,7 +208,7 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
                         zIndex: 10
                     }});
 
-                    // 마커/카드 호버 및 클릭 시 최상단(z-index) 올려주기 복구
+                    // 마커/카드 호버 및 클릭 시 최상단(z-index) 올려주기
                     div.onmouseenter = function() {{
                         o.setZIndex(99999);
                         m.setZIndex(99999);
@@ -217,7 +217,7 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
                         if (!div.classList.contains('active-card')) {{
                             o.setZIndex(10);
                             m.setZIndex(10);
-                        }
+                        }}
                     }};
                     div.onclick = function(e) {{
                         e.stopPropagation();
@@ -377,7 +377,6 @@ def fetch_molit_single_task(lawd_cd, ymd, property_type):
 
 @st.cache_data(ttl=86400, show_spinner=False)
 def get_cached_apt_coord(region_name, umd_name, jibun, raw_apt_name):
-    """지적확인: 카카오 검색 시 엉뚱한 동 대표위치로 떨어지는 Broad Fallback을 원천 제거함"""
     headers = {"Authorization": f"KakaoAK {KAKAO_REST_KEY}"}
     
     # 1. Exact Address Search (지번 정확 검색)
@@ -402,7 +401,6 @@ def get_cached_apt_coord(region_name, umd_name, jibun, raw_apt_name):
                         return float(doc['y']), float(doc['x'])
         except Exception: pass
 
-    # 좌표 정밀 탐색 실패 시 엉뚱한 건물(코오롱 등) 위치로 쏠리지 않도록 None 반환
     return None, None
 
 @st.cache_data(ttl=86400, show_spinner=False)
@@ -439,7 +437,6 @@ def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_ty
     valid_trades = []
     for t in raw_items:
         k = (t['umd_name'], t['jibun'], t['apt_name'], t.get('raw_apt_name', ''))
-        # 유효 좌표가 검증된 물건만 지도 데이터로 구성 (엉뚱한 위치 쏠림 방지)
         if k in coord_cache:
             c_lat, c_lng, dist = coord_cache[k]
             t_item = t.copy()
