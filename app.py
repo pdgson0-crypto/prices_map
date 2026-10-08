@@ -82,7 +82,7 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
     <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey={KAKAO_JS_KEY}&libraries=clusterer"></script>
     <style>
         html, body {{ width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden; font-family: sans-serif; }}
-        #map-container {{ position: relative; width: 100%; height: 860px; border-radius: 12px; overflow: hidden; border: 1px solid #374151; }}
+        #map-container {{ position: relative; width: 100%; height: 1000px; border-radius: 12px; overflow: hidden; border: 1px solid #374151; }}
         #map {{ width: 100%; height: 100%; }}
         
         #map-loader {{
@@ -183,7 +183,7 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
 
         window.addEventListener("message", e => {{ if (e.data && e.data.type === "streamlit:render") renderMap(e.data.args); }});
         sendMsg("streamlit:componentReady", {{ apiVersion: 1 }});
-        sendMsg("streamlit:setFrameHeight", {{ height: 870 }});
+        sendMsg("streamlit:setFrameHeight", {{ height: 1020 }});
 
         function renderMap(props) {{
             var loader = document.getElementById('map-loader');
