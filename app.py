@@ -41,7 +41,7 @@ def get_recent_months(n=12):
 def format_region_display(region_list):
     return list(dict.fromkeys(region_list))
 
-st.set_page_config(page_title="부동산 실거래가 지도", layout="wide")
+st.set_page_config(page_title="PriceMap", layout="wide")
 
 st.markdown("""
 <style>
@@ -507,7 +507,7 @@ if candidates:
     prop_type = st.session_state.get("submitted_property_type", "아파트")
     months_opt = st.session_state.get("submitted_months", 12)
 
-    with st.spinner("실거래가 데이터 및 카카오 지도 렌더링 중..."):
+    with st.spinner("인근 지역 실거래가 데이터 수집중입니다..."):
         lat, lng, full_address, _, region_list, filtered_df = fetch_real_estate_ultra_fast(
             selected_candidate['lat'], selected_candidate['lng'], selected_candidate['address'], selected_candidate['place_name'], prop_type, months_opt
         )
