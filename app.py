@@ -110,14 +110,19 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
             justify-content: center; align-items: center; color: #ffffff;
             transition: opacity 0.2s ease;
         }}
-        .spinner {{
-            width: 48px; height: 48px;
+        .spinner {
+            width: 48px;
+            height: 48px;
             border: 5px solid rgba(255, 255, 255, 0.2);
-            border-top: 5px solid #10b981;
+            border-top-color: #10b981;
             border-radius: 50%;
+            -webkit-animation: spin 0.8s linear infinite;
             animation: spin 0.8s linear infinite;
-        }}
-        @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
+            box-sizing: border-box;
+            margin-bottom: 12px;
+        }
+        @-webkit-keyframes spin { 0% { -webkit-transform: rotate(0deg); } 100% { -webkit-transform: rotate(360deg); } }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         
         #detail-panel {{ position: absolute; top: 0; right: -430px; width: 410px; height: 100%; background: #111827; color: #f3f4f6; transition: right 0.3s; z-index: 800000; display: flex; flex-direction: column; border-left: 1px solid #374151; }}
         #detail-panel.open {{ right: 0; }}
@@ -148,7 +153,10 @@ INDEX_HTML_CONTENT = f"""<!DOCTYPE html>
 <body>
     <div id="map-container">
         <div id="map-loader">
-            <div class="spinner"></div>
+            <svg width="50" height="50" viewBox="0 0 24 24" style="animation: spin 1s linear infinite; -webkit-animation: spin 1s linear infinite; margin-bottom: 12px;">
+                <path d="M12,1A11,11,0,1,0,23,12,11,11,0,0,0,12,1Zm0,19a8,8,0,1,1,8-8A8,8,0,0,1,12,20Z" opacity=".25" fill="#ffffff"/>
+                <path d="M12,4a8,8,0,0,1,7.89,6.7A1.5,1.5,0,0,0,21.38,12a1.5,1.5,0,0,0,1.48-1.75,11,11,0,0,0-21.72,0A1.5,1.5,0,0,0,2.62,12a1.5,1.5,0,0,0,1.49-1.3A8,8,0,0,1,12,4Z" fill="#10b981"/>
+            </svg>
             <div id="loader-msg" style="margin-top: 16px; font-size: 14px; font-weight: 600; color: #f3f4f6; text-align: center; padding: 0 20px;">
                 실거래 데이터를 불러오는 중입니다...
             </div>
