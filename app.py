@@ -271,7 +271,7 @@ API_ENDPOINTS = {
     "토지": "http://apis.data.go.kr/1613000/RTMSDataSvcLandTrade/getRTMSDataSvcLandTrade"
 }
 
-def get_nearby_lawd_codes(lat, lng, radius_km=1.5):
+def get_nearby_lawd_codes(lat, lng, radius_km=2.5):
     headers = {"Authorization": f"KakaoAK {KAKAO_REST_KEY}"}
     lawd_info = {}
     offset = radius_km / 111.0
