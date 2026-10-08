@@ -40,7 +40,6 @@ def get_recent_months(n=12):
 
 st.set_page_config(page_title="부동산 실거래가 지도", layout="wide")
 
-# CSS: 문제의 stSpinner 전체화면 모달 제거 및 레이아웃 정리
 st.markdown("""
 <style>
     .info-banner-sidebar { background: #064e3b; border: 1px solid #10b981; border-radius: 8px; padding: 12px; margin-top: 15px; font-size: 13px; color: #ecfdf5; }
@@ -214,15 +213,19 @@ def fetch_molit_single_task(lawd_cd, ymd, property_type):
             'LAWD_CD': lawd_cd,
             'DEAL_YMD': ymd,
             'pageNo': str(page_no),
-            'numOfRows': '1000'
+            'numOfRows': '100'
         }
         try:
-            res = requests.get(api_url, params=params, timeout=4)
+            res = requests.get(api_url, params=params, timeout=5)
             if res.status_code == 200:
                 root = ET.fromstring(res.content)
                 header_code = root.findtext('.//resultCode') or root.findtext('.//header/resultCode')
                 if header_code and header_code not in ['00', '000']:
                     break
+
+                # totalCount 파싱하여 조기 종료 버그 수정
+                total_cnt_elem = root.find('.//totalCount') or root.find('.//body/totalCount')
+                total_count = int(total_cnt_elem.text) if total_cnt_elem is not None and total_cnt_elem.text.isdigit() else 0
 
                 items = root.findall('.//item')
                 if not items:
@@ -232,7 +235,6 @@ def fetch_molit_single_task(lawd_cd, ymd, property_type):
                     umd_name = get_xml_text(item, ['umdNm', 'umdName', 'dong'])
                     jibun_val = get_xml_text(item, ['jibun', 'lnbr'])
 
-                    # 연립/다세대 태그 파싱 (mhbNm, myeonArea)
                     if property_type == "연립/다세대":
                         apt_name = get_xml_text(item, ['mhbNm', 'mhbName', 'rhNm', 'vesselNm', 'buildingNm'])
                         area_val = get_xml_text(item, ['myeonArea', 'excluUseAr', 'excluArea', 'area'])
@@ -246,7 +248,7 @@ def fetch_molit_single_task(lawd_cd, ymd, property_type):
                         apt_name = ""
                         area_val = get_xml_text(item, ['totalFloorArea', 'totArea', 'plottageArea'])
 
-                    # 건물명 없는 연립/다세대는 [동 + 지번 + 빌라]로 이름 부여 (지도 표시 보장)
+                    raw_apt_name = apt_name
                     if not apt_name or not apt_name.strip():
                         if umd_name and jibun_val:
                             apt_name = f"{umd_name} {jibun_val} 빌라"
@@ -263,6 +265,7 @@ def fetch_molit_single_task(lawd_cd, ymd, property_type):
                     
                     items_list.append({
                         "apt_name": apt_name,
+                        "raw_apt_name": raw_apt_name,
                         "umd_name": umd_name,
                         "jibun": jibun_val,
                         "price": int(price_str) if price_str.isdigit() else 0,
@@ -271,7 +274,10 @@ def fetch_molit_single_task(lawd_cd, ymd, property_type):
                         "deal_date": f"{deal_year}-{deal_month}-{deal_day}"
                     })
                 
-                if len(items) < 1000:
+                # 전체 건수와 비교하여 페이지네이션 정상 수행
+                if total_count > 0 and (page_no * 100) >= total_count:
+                    break
+                if len(items) < 100:
                     break
                 page_no += 1
             else:
@@ -282,12 +288,22 @@ def fetch_molit_single_task(lawd_cd, ymd, property_type):
     return items_list
 
 @st.cache_data(ttl=86400, show_spinner=False)
-def get_cached_apt_coord(region_name, umd_name, jibun, apt_name):
+def get_cached_apt_coord(region_name, umd_name, jibun, raw_apt_name):
     headers = {"Authorization": f"KakaoAK {KAKAO_REST_KEY}"}
     queries = []
-    if umd_name and jibun: queries.append((f"{region_name} {umd_name} {jibun} {apt_name}", "keyword"))
-    queries.append((f"{region_name} {umd_name} {jibun}", "address"))
-    if umd_name: queries.append((f"{region_name} {umd_name}", "address"))
+    
+    # 1순위: 지번 주소 검색 (연립/다세대 정확도 향상)
+    if umd_name and jibun:
+        queries.append((f"{region_name} {umd_name} {jibun}", "address"))
+        queries.append((f"{umd_name} {jibun}", "address"))
+    
+    # 2순위: 원본 건물명이 존재할 경우 키워드 검색
+    if raw_apt_name and raw_apt_name.strip():
+        queries.append((f"{region_name} {umd_name} {raw_apt_name}", "keyword"))
+        
+    # 3순위: 동 단위 주소 검색
+    if umd_name:
+        queries.append((f"{region_name} {umd_name}", "address"))
 
     for q_str, q_type in queries:
         try:
@@ -308,8 +324,7 @@ def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_ty
     tasks = [(code, ymd, property_type) for code in lawd_info.keys() for ymd in get_recent_months(months_count)]
 
     raw_items = []
-    # API 요청 차단 방지를 위해 안정적인 스레드 수(6)로 조정
-    with ThreadPoolExecutor(max_workers=6) as executor:
+    with ThreadPoolExecutor(max_workers=8) as executor:
         futures = [executor.submit(fetch_molit_single_task, c, y, p) for c, y, p in tasks]
         for f in as_completed(futures):
             res = f.result()
@@ -319,12 +334,12 @@ def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_ty
     if not raw_items:
         return lat, lng, full_address, "", region_list, pd.DataFrame()
 
-    unique_locs = {(i['umd_name'], i['jibun'], i['apt_name']): i for i in raw_items}
+    unique_locs = {(i['umd_name'], i['jibun'], i['apt_name'], i.get('raw_apt_name', '')): i for i in raw_items}
     coord_cache = {}
     main_region = region_list[0] if region_list else ""
 
-    with ThreadPoolExecutor(max_workers=8) as executor:
-        futures = {executor.submit(get_cached_apt_coord, main_region, k[0], k[1], k[2]): k for k in unique_locs.keys()}
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(get_cached_apt_coord, main_region, k[0], k[1], k[3]): k for k in unique_locs.keys()}
         for f in as_completed(futures):
             k = futures[f]
             c_lat, c_lng = f.result()
@@ -333,15 +348,16 @@ def fetch_real_estate_ultra_fast(lat, lng, full_address, place_name, property_ty
 
     valid_trades = []
     for t in raw_items:
-        k = (t['umd_name'], t['jibun'], t['apt_name'])
+        k = (t['umd_name'], t['jibun'], t['apt_name'], t.get('raw_apt_name', ''))
+        # 주소 검색 실패 시에도 데이터를 버리지 않고 예비 좌표(lat, lng) 적용하여 100% 데이터 유지
         if k in coord_cache:
             c_lat, c_lng, dist = coord_cache[k]
-            t_item = t.copy()
-            t_item.update({'lat': c_lat, 'lng': c_lng, '거리(km)': dist})
-            valid_trades.append(t_item)
-
-    if not valid_trades:
-        return lat, lng, full_address, "", region_list, pd.DataFrame()
+        else:
+            c_lat, c_lng, dist = lat, lng, 0.0
+            
+        t_item = t.copy()
+        t_item.update({'lat': c_lat, 'lng': c_lng, '거리(km)': dist})
+        valid_trades.append(t_item)
 
     df = pd.DataFrame(valid_trades).rename(columns={"apt_name": "물건명", "price": "매매가(만원)", "area": "면적(㎡)", "floor": "층수", "deal_date": "계약일"})
     return lat, lng, full_address, "", region_list, df.sort_values(by=['계약일'], ascending=False).reset_index(drop=True)
